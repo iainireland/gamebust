@@ -88,6 +88,11 @@ impl Registers {
             Reg16::SP => { self.sp = value; },
         }
     }
+    pub fn set_flags_nhc(&mut self, n: bool, h: bool, c: bool) {
+        self.f_n = n;
+        self.f_h = h;
+        self.f_c = c;
+    }
     fn get_f(&self) -> u8 {
         let mut result = 0;
         if self.f_z { result &= 0x80; }
