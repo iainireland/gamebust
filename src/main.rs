@@ -73,7 +73,6 @@ impl CPU {
     }
     pub fn load_boot_rom(&mut self) {
         let boot_rom = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/boot.rom"));
-        println!("boot_rom: {:?}", boot_rom.to_vec());
         self.mem.write(0, boot_rom);
     }
     pub fn step(&mut self) {
@@ -182,7 +181,21 @@ impl CPU {
                 self.reg.w8(Reg8::A, result);
             }),
             (0,4,7) => op!("DAA", 4, {
-                unimplemented!("Decimal adjust A");
+                let a = self.reg.r8(Reg8::A);
+
+                let result = if self.reg.f_n {
+                    let corr_lo = if self.reg.f_h { 0x6 } else { 0x0 };
+                    let corr_hi = if self.reg.f_c { 0x60 } else { 0x0 };
+                    a.wrapping_sub(corr_hi | corr_lo)
+                } else {
+                    let corr_lo = if self.reg.f_h || a & 0xf > 9 { 0x6 } else { 0x0 };
+                    self.reg.f_c = self.reg.f_c || a > 0x99;
+                    let corr_hi = if self.reg.f_c { 0x6 } else { 0x0 };
+                    a.wrapping_add(corr_hi | corr_lo)
+                };
+                self.reg.f_z = result == 0;
+                self.reg.f_h = false;
+                self.reg.w8(Reg8::A, result);
             }),
             (0,5,7) => op!("CPL", 4, {
                 let complemented = !self.reg.r8(Reg8::A);
@@ -453,7 +466,7 @@ impl CPU {
     }
     fn sub8(&mut self, a: u8, b: u8) -> u8 {
         let (result, carry) = a.overflowing_sub(b);
-        let half_carry = (a & 0xf).wrapping_sub(b & 0xf) & 0x10 != 0; // TODO: is this right?
+        let half_carry = a & 0xf < b & 0xf;
         self.reg.set_flags_nhc(true, half_carry, carry);
         result
     }
