@@ -1,17 +1,34 @@
+#[macro_use]
+extern crate clap;
 extern crate sdl2;
 
+use std::path::Path;
+
+mod instructions;
 mod registers;
-mod memory;
+mod bus;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
 // use sdl2::rect::Rect;
 
-use registers::{Registers,Reg8,Reg16};
-use memory::Memory;
+use registers::{Registers,Reg8,Reg16,Indirect};
+use bus::Bus;
+use instructions::{Cond,Instr};
 
 fn main() {
+    let matches = clap_app!(gamebust =>
+                            (version: "0.1")
+                            (author: "Iain Ireland")
+                            (about: "gameboy emulator")
+                            // (@arg DEBUG: -d --debug "Turns on debug mode")
+                            (@arg INPUT: +required "Sets the input file to use")
+
+    ).get_matches();
+
+    let input_file = matches.value_of("INPUT").unwrap();
+
     let scale = 5;
     let width = 144;
     let height = 160;
@@ -30,9 +47,11 @@ fn main() {
     canvas.clear();
 
     let mut events = sdl_context.event_pump().unwrap();
-    let mut cpu = CPU::new();
+
+    let mut cpu = CPU::new(Path::new(&input_file));
     cpu.load_boot_rom();
 
+    let mut total_cycles = 0;
     'eventloop: loop {
         for event in events.poll_iter() {
             match event {
@@ -42,29 +61,29 @@ fn main() {
                 _ => {}
             }
         }
-        cpu.step();
+        let offset = cpu.reg.pc;
+        let instr = cpu.fetch();
+        print!("{:04x}: {:<20}|", offset, format!("{}", instr));
+        let cycles = cpu.exec(instr);
+        println!(" {} |",cpu.reg);
+        total_cycles += cycles;
     }
 }
 
 pub struct CPU {
     reg: Registers,
-    mem: Memory,
+    bus: Bus,
     interrupts: bool,
     interrupts_buffer: bool,
     halted: bool,
     stopped: bool
 }
 
-macro_rules! op {
-    ($description:expr, $cycles:expr, $code:block) =>
-        ({$code; $cycles})
-}
-
 impl CPU {
-    pub fn new() -> Self {
+    pub fn new(cartridge_path: &Path) -> Self {
         CPU {
             reg: Registers::new(),
-            mem: Memory::new(),
+            bus: Bus::new(cartridge_path).expect("File not found"),
             interrupts: false,
             interrupts_buffer: false,
             halted: false,
@@ -73,114 +92,210 @@ impl CPU {
     }
     pub fn load_boot_rom(&mut self) {
         let boot_rom = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/boot.rom"));
-        self.mem.write(0, boot_rom);
+        self.bus.write(0, boot_rom);
     }
-    pub fn step(&mut self) {
+    pub fn fetch(&mut self) -> Instr {
         let opcode = self.imm8();
-        println!("{:x}: {:x}", self.reg.pc, opcode);
 
         let x = opcode >> 6;
         let y = (opcode >> 3) & 7;
         let z = opcode & 7;
 
-        let mut extra_cycles = 0;
-        let cycles = match (x,y,z) {
-            (0,0,0) => op!("NOP", 4, {}),
-            (0,1,0) => op!("LD (addr), SP", 20, {
-                let addr = self.imm16();
-                self.mem.w16(addr, self.reg.sp);
-            }),
-            (0,2,0) => op!("STOP", 4, {
-                self.stopped = true;
-            }),
-            (0,3,0) => op!("JR disp", 12, {
-                let disp = self.imm8() as i8 as i16;
-                self.reg.pc = (self.reg.pc as i16).wrapping_add(disp) as u16;
-            }),
-            (0,4...7,0) => op!("JR <cond>,disp", 8, {
-                let disp = self.imm8() as i8 as i16;
-                if self.test_cc(y-4) {
-                    self.reg.pc = (self.reg.pc as i16).wrapping_add(disp) as u16;
-                    extra_cycles = 4;
+        match (x,y,z) {
+            (0,0,0) => Instr::Nop,
+            (0,1,0) => Instr::StoreSP(self.imm16()),
+            (0,2,0) => Instr::Stop,
+            (0,3,0) => Instr::JumpRelative(self.imm8() as i8, Cond::Always),
+            (0,4...7,0) => Instr::JumpRelative(self.imm8() as i8, Cond::from(y-4)),
+            (0,_,1) if y % 2 == 0  => Instr::LoadImm16(Reg16::from(y, true), self.imm16()),
+            (0,_,1) => Instr::AddHL(Reg16::from(y, true)),
+            (0,_,2) if y % 2 == 0 => Instr::StoreA(Indirect::from(y)),
+            (0,_,2) => Instr::LoadA(Indirect::from(y)),
+            (0,_,3) if y % 2 == 0 => Instr::Inc16(Reg16::from(y, true)),
+            (0,_,3) => Instr::Dec16(Reg16::from(y, true)),
+            (0,_,4) => Instr::Inc8(Reg8::from(y)),
+            (0,_,5) => Instr::Dec8(Reg8::from(y)),
+            (0,_,6) => Instr::LoadImm8(Reg8::from(y), self.imm8()),
+            (0,0,7) => Instr::RotateALeft,
+            (0,1,7) => Instr::RotateARight,
+            (0,2,7) => Instr::RotateALeftCarry,
+            (0,3,7) => Instr::RotateARightCarry,
+            (0,4,7) => Instr::DecimalAdjust,
+            (0,5,7) => Instr::Complement,
+            (0,6,7) => Instr::ComplementCarry,
+            (0,7,7) => Instr::SetCarry,
+            (1,6,6) => Instr::Halt,
+            (1,_,_) => Instr::RegCopy(Reg8::from(y), Reg8::from(z)),
+            (2,0,_) => Instr::Add(Reg8::from(z)),
+            (2,1,_) => Instr::AddCarry(Reg8::from(z)),
+            (2,2,_) => Instr::Sub(Reg8::from(z)),
+            (2,3,_) => Instr::SubCarry(Reg8::from(z)),
+            (2,4,_) => Instr::And(Reg8::from(z)),
+            (2,5,_) => Instr::Xor(Reg8::from(z)),
+            (2,6,_) => Instr::Or(Reg8::from(z)),
+            (2,7,_) => Instr::Comp(Reg8::from(z)),
+            (3,0...3,0) => Instr::Ret(Cond::from(y)),
+            (3,4,0) => Instr::StoreIO(self.imm8()),
+            (3,5,0) => Instr::StackAdjust(self.imm8() as i8),
+            (3,6,0) => Instr::LoadIO(self.imm8()),
+            (3,7,0) => Instr::LoadLocalAddr(self.imm8() as i8),
+            (3,_,1) if y % 2 == 0 => Instr::Pop(Reg16::from(y, false)),
+            (3,1,1) => Instr::Ret(Cond::Always),
+            (3,3,1) => Instr::RetI,
+            (3,5,1) => Instr::JumpHL,
+            (3,7,1) => Instr::LoadStackHL,
+            (3,0...3,2) => Instr::Jump(self.imm16(), Cond::from(y)),
+            (3,4,2) => Instr::StoreIOC,
+            (3,5,2) => Instr::StoreGlobal(self.imm16()),
+            (3,6,2) => Instr::LoadIOC,
+            (3,7,2) => Instr::LoadGlobal(self.imm16()),
+            (3,0,3) => Instr::Jump(self.imm16(), Cond::Always),
+            (3,1,3) => {
+                let extended_opcode = self.imm8();
+                let operation = extended_opcode >> 6;
+                let y = (extended_opcode >> 3) & 7;
+                let reg = Reg8::from(extended_opcode & 7);
+                match operation {
+                    0 => { // Rotations
+                        match y {
+                            0 => Instr::RotateLeft(reg),
+                            1 => Instr::RotateRight(reg),
+                            2 => Instr::RotateLeftCarry(reg),
+                            3 => Instr::RotateRightCarry(reg),
+                            4 => Instr::ShiftLeft(reg),
+                            5 => Instr::ShiftRightLogical(reg),
+                            6 => Instr::SwapBytes(reg),
+                            7 => Instr::ShiftRightArith(reg),
+                            _ => unreachable!("Invalid rotation"),
+                        }
+                    },
+                    1 => Instr::Bit(reg, y),
+                    2 => Instr::Reset(reg, y),
+                    3 => Instr::Set(reg, y),
+                    _ => unreachable!("Invalid extended instruction")
                 }
-            }),
-            (0,0,1)|(0,2,1)|(0,4,1)|(0,6,1) => op!("LD RR, imm", 12, {
-                let imm = self.imm16();
-                self.reg.w16(CPU::get_reg16(y, true), imm);
-            }),
-            (0,_,1) => op!("ADD HL, RR", 8, {
-                let hl = self.reg.r16(Reg16::HL);
-                let rr = self.reg.r16(CPU::get_reg16(y-1, true));
+            },
+            (3,6,3) => Instr::DisableInterrupts,
+            (3,7,3) => Instr::EnableInterrupts,
+            (3,0...3,4) => Instr::Call(self.imm16(), Cond::from(y)),
+            (3,_,5) if y % 2 == 0 => Instr::Push(Reg16::from(y, false)),
+            (3,1,5) => Instr::Call(self.imm16(), Cond::Always),
+            (3,0,6) => Instr::AddImm(self.imm8()),
+            (3,1,6) => Instr::AddCarryImm(self.imm8()),
+            (3,2,6) => Instr::SubImm(self.imm8()),
+            (3,3,6) => Instr::SubCarryImm(self.imm8()),
+            (3,4,6) => Instr::AndImm(self.imm8()),
+            (3,5,6) => Instr::XorImm(self.imm8()),
+            (3,6,6) => Instr::OrImm(self.imm8()),
+            (3,7,6) => Instr::CompImm(self.imm8()),
+            (3,_,7) => Instr::Restart(y),
+            _ => unimplemented!("Unimplemented opcode: {:X} \nregs: {:?}", opcode, self.reg)
+        }
+    }
+    fn imm8(&mut self) -> u8 {
+        let value = self.bus.r8(self.reg.pc);
+        self.reg.pc += 1;
+        value
+    }
+    fn imm16(&mut self) -> u16 {
+        let value = self.bus.r16(self.reg.pc);
+        self.reg.pc += 2;
+        value
+    }
+
+    pub fn exec(&mut self, instr: Instr) -> u64 {
+        match instr {
+            Instr::Nop => 4,
+            Instr::Stop => {
+                self.stopped = true;
+                4
+            },
+            Instr::StoreSP(addr) => {
+                self.bus.w16(addr, self.reg.sp);
+                20
+            },
+            Instr::JumpRelative(offset, cond) => {
+                if self.test_cc(cond) {
+                    self.reg.pc = (self.reg.pc as i16).wrapping_add(offset as i16) as u16;
+                    12
+                } else {
+                    8
+                }
+            },
+            Instr::LoadImm16(reg, imm) => {
+                self.set_reg16(reg, imm);
+                12
+            },
+            Instr::AddHL(reg) => {
+                let hl = self.get_reg16(Reg16::HL);
+                let rr = self.get_reg16(reg);
                 let result = self.add16(hl, rr);
-                self.reg.w16(Reg16::HL, result);
-            }),
-            (0,0,2)|(0,2,2)|(0,4,2)|(0,6,2) => op!("LD (RR),A", 8, {
-                let reg = self.get_indirect_reg(y);
-                self.mem.w8(self.reg.r16(reg), self.reg.r8(Reg8::A));
-            }),
-            (0,_,2) => op!("LD A,(RR)", 8, {
-                let reg = self.get_indirect_reg(y-1);
-                let val = self.mem.r8(self.reg.r16(reg));
-                self.reg.w8(Reg8::A, val);
-            }),
-            (0,0,3)|(0,2,3)|(0,4,3)|(0,6,3) => op!("INC RR", 8,  {
-                let reg = CPU::get_reg16(y, true);
-                let val = self.reg.r16(reg).wrapping_add(1);
-                self.reg.w16(reg, val);
-            }),
-            (0,_,3) => op!("DEC RR", 8, {
-                let reg = CPU::get_reg16(y-1, true);
-                let val = self.reg.r16(reg).wrapping_sub(1);
-                self.reg.w16(reg, val);
-            }),
-            (0,6,4) => op!("INC (HL)", 12, {
-                let addr = self.reg.r16(Reg16::HL);
-                let val = self.mem.r8(addr);
-                let result = self.inc8(val);
-                self.mem.w8(addr, result);
-            }),
-            (0,_,4) => op!("INC R", 4, {
-                let reg = CPU::get_reg8(y);
-                let val = self.reg.r8(reg);
-                let result = self.inc8(val);
-                self.reg.w8(reg, result);
-            }),
-            (0,6,5) => op!("DEC (HL)", 12, {
-                let addr = self.reg.r16(Reg16::HL);
-                let val = self.mem.r8(addr);
-                let result = self.dec8(val);
-                self.mem.w8(addr, result);
-            }),
-            (0,_,5) => op!("DEC R", 4, {
-                let reg = CPU::get_reg8(y);
-                let val = self.reg.r8(reg);
-                let result = self.dec8(val);
-                self.reg.w8(reg, result);
-            }),
-            (0,6,6) => op!("LD (HL), imm", 12, {
-                let addr = self.reg.r16(Reg16::HL);
-                let imm = self.imm8();
-                self.mem.w8(addr, imm);
-            }),
-            (0,_,6) => op!("LD R, imm", 8, {
-                let reg = CPU::get_reg8(y);
-                let imm = self.imm8();
-                self.reg.w8(reg, imm);
-            }),
-            (0,0...3,7) => op!("R[RL](C)A", 4, {
-                let a = self.reg.r8(Reg8::A);
-                let (result, carry) = match y {
-                    0 => (a.rotate_left(1), a & 0x80 != 0),
-                    1 => (a << 1 | if self.reg.f_c { 1 } else { 0 }, a & 0x80 != 0),
-                    2 => (a.rotate_right(1), a & 0x1 != 0),
-                    3 => (a >> 1 | if self.reg.f_c { 0x80 } else { 0 }, a & 0x1 != 0),
-                    _ => unreachable!("Invalid rotation op")
-                };
+                self.set_reg16(Reg16::HL, result);
+                8
+            },
+            Instr::StoreA(reg) => {
+                let addr = self.get_indirect(reg);
+                self.bus.w8(addr, self.reg.r8(Reg8::A));
+                8
+            },
+            Instr::LoadA(reg) => {
+                let addr = self.get_indirect(reg);
+                self.reg.w8(Reg8::A, self.bus.r8(addr));
+                8
+            },
+            Instr::Inc16(reg) => {
+                let result = self.get_reg16(reg).wrapping_add(1);
+                self.set_reg16(reg, result);
+                8
+            },
+            Instr::Dec16(reg) => {
+                let result = self.get_reg16(reg).wrapping_sub(1);
+                self.set_reg16(reg, result);
+                8
+            },
+            Instr::Inc8(reg) => {
+                let value = self.get_reg8(reg);
+                let result = value.wrapping_add(1);
+                self.set_reg8(reg, result);
+                self.reg.f_z = result == 0;
+                self.reg.f_n = false;
+                self.reg.f_h = value & 0xf == 0xf;
+                if reg == Reg8::HL { 12 } else { 4 }
+            },
+            Instr::Dec8(reg) => {
+                let value = self.get_reg8(reg);
+                let result = value.wrapping_sub(1);
+                self.set_reg8(reg, result);
+                self.reg.f_z = result == 0;
+                self.reg.f_n = true;
+                self.reg.f_h = value & 0xf == 0;
+                if reg == Reg8::HL { 12 } else { 4 }
+            },
+            Instr::LoadImm8(reg, imm) => {
+                self.set_reg8(reg, imm);
+                if reg == Reg8::HL { 12 } else { 8 }
+            },
+            Instr::RotateALeft => {
+                self.rotate(Reg8::A, |a,_c| (a.rotate_left(1), a & 0x80 != 0));
                 self.reg.f_z = false;
-                self.reg.set_flags_nhc(false, false, carry);
-                self.reg.w8(Reg8::A, result);
-            }),
-            (0,4,7) => op!("DAA", 4, {
+                4
+            },
+            Instr::RotateALeftCarry => {
+                self.rotate(Reg8::A, |a,c| (a << 1 | if c { 1 } else { 0 }, a & 0x80 == 0));
+                self.reg.f_z = false;
+                4
+            },
+            Instr::RotateARight => {
+                self.rotate(Reg8::A, |a,_c| (a.rotate_right(1), a & 0x01 != 0));
+                self.reg.f_z = false;
+                4
+            },
+            Instr::RotateARightCarry => {
+                self.rotate(Reg8::A, |a,c| (a >> 1 | if c { 0x80 } else { 0 }, a & 0x1 == 0));
+                self.reg.f_z = false;
+                4
+            },
+            Instr::DecimalAdjust => {
                 let a = self.reg.r8(Reg8::A);
 
                 let result = if self.reg.f_n {
@@ -196,278 +311,319 @@ impl CPU {
                 self.reg.f_z = result == 0;
                 self.reg.f_h = false;
                 self.reg.w8(Reg8::A, result);
-            }),
-            (0,5,7) => op!("CPL", 4, {
+                4
+            },
+            Instr::Complement => {
                 let complemented = !self.reg.r8(Reg8::A);
                 self.reg.w8(Reg8::A, complemented);
-            }),
-            (0,6,7) => op!("SCF", 4, {
-                self.reg.set_flags_nhc(false, false, true);
-            }),
-            (0,7,7) => op!("CCF", 4, {
+                4
+            },
+            Instr::ComplementCarry => {
                 let complemented = !self.reg.f_c;
                 self.reg.set_flags_nhc(false, false, complemented);
-            }),
-            (1,6,6) => op!("HALT", 4, {
+                4
+            },
+            Instr::SetCarry => {
+                self.reg.set_flags_nhc(false, false, true);
+                4
+            },
+            Instr::Halt => {
                 self.halted = true;
-            }),
-            (1,6,_) => op!("LD (HL),R", 8, {
-                let addr = self.reg.r16(Reg16::HL);
-                let val = self.reg.r8(CPU::get_reg8(z));
-                self.mem.w8(addr, val);
-            }),
-            (1,_,6) => op!("LD R,(HL)", 8, {
-                let val = self.mem.r8(self.reg.r16(Reg16::HL));
-                self.reg.w8(CPU::get_reg8(y), val);
-            }),
-            (1,_,_) => op!("LD R1,R2", 4, {
-                let val = self.reg.r8(CPU::get_reg8(z));
-                self.reg.w8(CPU::get_reg8(y), val);
-            }),
-            (2,_,_) => op!("<op> A, (HL)/R", 8, {
-                let operand = if z == 6 {
-                    extra_cycles = 4;
-                    self.mem.r8(self.reg.r16(Reg16::HL))
-                } else {
-                    self.reg.r8(CPU::get_reg8(z))
+                4
+            },
+            Instr::RegCopy(to,from) => {
+                let val = self.get_reg8(from);
+                self.set_reg8(to, val);
+                if to == Reg8::HL || from == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::Add(reg) | Instr::AddCarry(reg) => {
+                let a = self.reg.r8(Reg8::A);
+                let operand = self.get_reg8(reg);
+                let is_carry = match instr { Instr::AddCarry(_) => true, _ => false };
+                let result = self.add8(a, operand, is_carry);
+                self.reg.w8(Reg8::A, result);
+                if reg == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::AddImm(imm) | Instr::AddCarryImm(imm) => {
+                let a = self.reg.r8(Reg8::A);
+                let is_carry = match instr {
+                    Instr::AddCarryImm(_) => true,
+                    _ => false
                 };
-                self.alu(y, operand);
-            }),
-            (3,0...3,0) => op!("RET <cond>", 8, {
-                if self.test_cc(y) {
-                    extra_cycles = 12;
-                    self.ret();
+                let result = self.add8(a, imm, is_carry);
+                self.reg.w8(Reg8::A, result);
+                4
+            },
+            Instr::Sub(reg) | Instr::SubCarry(reg) | Instr::Comp(reg) => {
+                let a = self.reg.r8(Reg8::A);
+                let operand = self.get_reg8(reg);
+                let (is_carry, write_back) = match instr {
+                    Instr::Sub(_) => (false, true),
+                    Instr::SubCarry(_) => (true, true),
+                    Instr::Comp(_) => (false, false),
+                    _ => unreachable!()
+                };
+                let result = self.sub8(a, operand, is_carry);
+                if write_back {
+                    self.reg.w8(Reg8::A, result);
                 }
-            }),
-            (3,4,0) => op!("LD (0xFF00 + nn), A", 12, {
-                let addr = 0xff00 + self.imm8() as u16;
-                self.mem.w8(addr, self.reg.r8(Reg8::A));
-            }),
-            (3,5,0) => op!("ADD SP, disp", 16, {
-                let sp = self.reg.sp;
-                let disp = self.imm8() as i8 as i16 as u16;
-                self.reg.sp = self.add16(sp, disp);
-                self.reg.f_z = false;
-            }),
-            (3,6,0) => op!("LD A, (0xFF00 + nn)", 12, {
-                let addr = 0xff00 + self.imm8() as u16;
-                self.reg.w8(Reg8::A, self.mem.r8(addr));
-            }),
-            (3,7,0) => op!("LD HL, SP+disp", 12, {
-                let sp = self.reg.sp;
-                let disp = self.imm8() as i8 as i16 as u16;
-                let result = self.add16(sp, disp);
-                self.reg.w16(Reg16::HL, result);
-                self.reg.f_z = false;
-            }),
-            (3,0,1)|(3,2,1)|(3,4,1)|(3,6,1) => op!("POP RR", 12, {
-                let reg = CPU::get_reg16(y, false);
-                let val = self.mem.r16(self.reg.sp);
-                self.reg.sp += 2;
-                self.reg.w16(reg,val);
-            }),
-            (3,1,1) => op!("RET", 16, {
-                self.ret();
-            }),
-            (3,3,1) => op!("RETI", 16, {
+                if reg == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::SubImm(imm) | Instr::SubCarryImm(imm) | Instr::CompImm(imm) => {
+                let a = self.reg.r8(Reg8::A);
+                let (is_carry, write_back) = match instr {
+                    Instr::SubImm(_) => (false, true),
+                    Instr::SubCarryImm(_) => (true, true),
+                    Instr::CompImm(_) => (false, false),
+                    _ => unreachable!()
+                };
+                let result = self.sub8(a, imm, is_carry);
+                if write_back {
+                    self.reg.w8(Reg8::A, result);
+                }
+                4
+            },
+            Instr::And(reg) => {
+                let value = self.get_reg8(reg);
+                self.logical(value, |a,b| a & b, true);
+                if reg == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::Or(reg) => {
+                let value = self.get_reg8(reg);
+                self.logical(value, |a,b| a | b, true);
+                if reg == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::Xor(reg) => {
+                let value = self.get_reg8(reg);
+                self.logical(value, |a,b| a ^ b, true);
+                if reg == Reg8::HL { 8 } else { 4 }
+            },
+            Instr::AndImm(imm) => {
+                self.logical(imm, |a,b| a & b, true);
+                4
+            },
+            Instr::OrImm(imm) => {
+                self.logical(imm, |a,b| a | b, true);
+                4
+            },
+            Instr::XorImm(imm) => {
+                self.logical(imm, |a,b| a ^ b, true);
+                4
+            },
+            Instr::Ret(cond) => {
+                if self.test_cc(cond) {
+                    self.ret();
+                    20
+                } else {
+                    8
+                }
+            },
+            Instr::RetI => {
                 self.ret();
                 self.interrupts = true;
-            }),
-            (3,5,1) => op!("JP HL", 4, {
+                16
+            },
+            Instr::StoreIO(offset) => {
+                let addr = 0xff00 + offset as u16;
+                self.bus.w8(addr, self.reg.r8(Reg8::A));
+                12
+            },
+            Instr::LoadIO(offset) => {
+                let addr = 0xff00 + offset as u16;
+                self.reg.w8(Reg8::A, self.bus.r8(addr));
+                12
+            },
+            Instr::StackAdjust(disp) => {
+                let sp = self.reg.sp;
+                self.reg.sp = self.add16(sp, disp as u16);
+                self.reg.f_z = false;
+                16
+            },
+            Instr::LoadLocalAddr(disp) => {
+                let sp = self.reg.sp;
+                let result = self.add16(sp, disp as u16);
+                self.reg.w16(Reg16::HL, result);
+                self.reg.f_z = false;
+                12
+            },
+            Instr::Pop(reg) => {
+                let value = self.bus.r16(self.reg.sp);
+                self.reg.sp += 2;
+                self.reg.w16(reg, value);
+                12
+            },
+            Instr::Push(reg) => {
+                self.reg.sp -= 2;
+                self.bus.w16(self.reg.sp, self.reg.r16(reg));
+                12
+            },
+            Instr::Jump(dest, cond) => {
+                if self.test_cc(cond) {
+                    self.reg.pc = dest;
+                    16
+                } else {
+                    12
+                }
+            },
+            Instr::JumpHL => {
                 let hl = self.reg.r16(Reg16::HL);
                 self.reg.pc = hl;
-            }),
-            (3,7,1) => op!("LD SP, HL", 8, {
+                4
+            },
+            Instr::LoadStackHL => {
                 let hl = self.reg.r16(Reg16::HL);
                 self.reg.sp = hl;
-            }),
-            (3,0...3,2) => op!("JP <cond>", 12, {
-                let dest = self.imm16();
-                if self.test_cc(y) {
-                    extra_cycles = 4;
-                    self.reg.pc = dest;
-                }
-            }),
-            (3,4,2) => op!("LD (0xFF00 + C), A", 12, {
-                let addr = 0xff00 + self.reg.r8(Reg8::C) as u16;
-                self.mem.w8(addr, self.reg.r8(Reg8::A));
-            }),
-            (3,5,2) => op!("LD (nn), A", 16, {
-                let addr = self.imm16();
-                self.mem.w8(addr, self.reg.r8(Reg8::A));
-            }),
-            (3,6,2) => op!("LD A, (0xFF00 + C)", 12, {
-                let addr = 0xff00 + self.reg.r8(Reg8::C) as u16;
-                self.reg.w8(Reg8::A, self.mem.r8(addr));
-            }),
-            (3,7,2) => op!("LD A, (nn)", 16, {
-                let addr = self.imm16();
-                self.reg.w8(Reg8::A, self.mem.r8(addr));
-            }),
-            (3,0,3) => op!("JP", 16, {
-                let dest = self.imm16();
-                self.reg.pc = dest;
-            }),
-            (3,1,3) => op!("CB+", 0, {
-                extra_cycles = self.cb_prefix();
-            }),
-            (3,6,3) => op!("DI", 4, {
-                self.interrupts_buffer = false;
-            }),
-            (3,7,3) => op!("EI", 4, {
-                self.interrupts_buffer = true;
-            }),
-            (3,0...3,4) => op!("CALL <cond>", 12, {
-                let dest = self.imm16();
-                if self.test_cc(y) {
-                    extra_cycles = 12;
-                    self.call(dest);
-                }
-            }),
-            (3,0,5)|(3,2,5)|(3,4,5)|(3,6,5) => op!("PUSH RR", 16, {
-                let reg = CPU::get_reg16(y, false);
-                self.reg.sp -= 2;
-                self.mem.w16(self.reg.sp, self.reg.r16(reg));
-            }),
-            (3,1,5) => op!("CALL", 24, {
-                let dest = self.imm16();
-                self.call(dest);
-            }),
-            (3,_,6) => op!("<op> A, (HL)/R", 8, {
-                let operand = self.imm8();
-                self.alu(y, operand);
-            }),
-            (3,_,7) => op!("RST", 16, {
-                self.call(y as u16 * 8);
-            }),
-            _ => unimplemented!("Unimplemented opcode: {:X} \nregs: {:?}", opcode, self.reg)
-        };
-        let _ = cycles + extra_cycles;
-
-    }
-    fn cb_prefix(&mut self) -> u32 {
-        let opcode = self.imm8();
-        let op = opcode >> 6;
-        let reg = opcode & 7;
-
-        let (value,cycles) = if reg == 6 {
-            (self.mem.r8(self.reg.r16(Reg16::HL)), 16)
-        } else {
-            (self.reg.r8(CPU::get_reg8(reg)), 8)
-        };
-        let result = match op {
-            0 => { // Rotations
-                let rot_op = (opcode >> 3) & 7;
-                let (result, carry) = match rot_op {
-                    0 => /*RLC*/ (value.rotate_left(1), value & 0x80 != 0),
-                    1 => /*RRC*/ (value.rotate_right(1), value & 0x1 != 0),
-                    2 => /*RL */ (value << 1 | if self.reg.f_c { 1 } else { 0 }, value & 0x80 != 0),
-                    3 => /*RR */ (value >> 1 | if self.reg.f_c { 0x80 } else { 0 }, value & 0x1 != 0),
-                    4 => /*SLA*/ (value << 1, value & 0x80 != 0),
-                    5 => /*SRA*/ (((value as i8) >> 1) as u8, value & 0x01 != 0),
-                    6 => /*SWP*/ (value.rotate_right(4), false),
-                    7 => /*SRL*/ (value >> 1, value & 0x1 != 0),
-                    _ => unreachable!("Invalid rotation op")
-                };
-                self.reg.f_c = carry;
-                self.reg.set_flags_nhc(false, false, rot_op != 6);
-                result
+                4
             },
-            1 => { // BIT
-                let bit = (opcode >> 3) & 7;
-                self.reg.f_z = value & (1<<bit) == 0;
+            Instr::StoreIOC => {
+                let addr = 0xff00 + self.reg.r8(Reg8::C) as u16;
+                self.bus.w8(addr, self.reg.r8(Reg8::A));
+                12
+            },
+            Instr::LoadIOC => {
+                let addr = 0xff00 + self.reg.r8(Reg8::C) as u16;
+                self.reg.w8(Reg8::A, self.bus.r8(addr));
+                12
+            },
+            Instr::StoreGlobal(addr) => {
+                self.bus.w8(addr, self.reg.r8(Reg8::A));
+                16
+            },
+            Instr::LoadGlobal(addr) => {
+                self.reg.w8(Reg8::A, self.bus.r8(addr));
+                16
+            },
+            Instr::DisableInterrupts => {
+                self.interrupts_buffer = false;
+                4
+            },
+            Instr::EnableInterrupts => {
+                self.interrupts_buffer = true;
+                4
+            },
+            Instr::Call(dest, cond) => {
+                if self.test_cc(cond) {
+                    self.call(dest);
+                    24
+                } else {
+                    12
+                }
+            },
+            Instr::Restart(index) => {
+                self.call(index as u16 * 8);
+                16
+            },
+            Instr::Bit(reg, bit) => {
+                let value = self.get_reg8(reg);
+                self.reg.f_z = value & (1 << bit) == 0;
                 self.reg.f_n = false;
                 self.reg.f_h = true;
-                return cycles; // early return; don't need to do writeback
+                if reg == Reg8::HL { 12 } else { 8 }
             },
-            2 => { // RES
-                let bit = (opcode >> 3) & 7;
-                value & !(1 << bit)
+            Instr::Set(reg, bit) => {
+                let value = self.get_reg8(reg);
+                let result = value | (1 << bit);
+                self.set_reg8(reg, result);
+                if reg == Reg8::HL { 16 } else { 8 }
             },
-            3 => { // SET
-                let bit = (opcode >> 3) & 7;
-                value & (1 << bit)
+            Instr::Reset(reg, bit) => {
+                let value = self.get_reg8(reg);
+                let result = value & !(1 << bit);
+                self.set_reg8(reg, result);
+                if reg == Reg8::HL { 16 } else { 8 }
             },
-            _ => unreachable!("Invalid CB instruction")
-        };
-        if reg == 6 {
-            self.mem.w8(self.reg.r16(Reg16::HL), result);
-        } else {
-            self.reg.w8(CPU::get_reg8(reg), result);
-        }
-        cycles
-    }
-    fn imm8(&mut self) -> u8 {
-        let val = self.mem.r8(self.reg.pc);
-        self.reg.pc += 1;
-        val
-    }
-    fn imm16(&mut self) -> u16 {
-        let val = self.mem.r16(self.reg.pc);
-        self.reg.pc += 2;
-        val
-    }
-    fn get_reg8(bits: u8) -> Reg8 {
-        match bits {
-            0 => Reg8::B,
-            1 => Reg8::C,
-            2 => Reg8::D,
-            3 => Reg8::E,
-            4 => Reg8::H,
-            5 => Reg8::L,
-            6 => panic!("Need special handling for (HL)"),
-            7 => Reg8::A,
-            _ => unreachable!("Invalid reg8 field")
-        }
-    }
-    fn get_reg16(bits: u8, use_sp: bool) -> Reg16 {
-        match bits {
-            0 => Reg16::BC,
-            2 => Reg16::DE,
-            4 => Reg16::HL,
-            6 => if use_sp { Reg16::SP } else { Reg16::AF },
-            _ => unreachable!("Invalid reg16 field")
+            Instr::RotateLeft(reg) => {
+                self.rotate(reg, |a,_c| (a.rotate_left(1), a & 0x80 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::RotateRight(reg) => {
+                self.rotate(reg, |a,_c| (a.rotate_right(1), a & 0x01 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::RotateLeftCarry(reg) => {
+                self.rotate(reg, |a,c| (a << 1 | if c { 1 } else { 0 }, a & 0x80 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::RotateRightCarry(reg) => {
+                self.rotate(reg, |a,c| (a >> 1 | if c { 0x80 } else { 0 }, a & 1 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::ShiftLeft(reg) => {
+                self.rotate(reg, |a,_c| (a << 1, a & 0x80 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::ShiftRightLogical(reg) => {
+                self.rotate(reg, |a,_c| (a >> 1, a & 1 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::ShiftRightArith(reg) => {
+                self.rotate(reg, |a,_c| (((a as i8) >> 1) as u8, a & 1 != 0));
+                if reg == Reg8::HL { 16 } else { 8 }
+            },
+            Instr::SwapBytes(reg) => {
+                self.rotate(reg, |a,_c| (a.rotate_left(4), false));
+                if reg == Reg8::HL { 16 } else { 8 }
+            }
         }
     }
-    fn test_cc(&self, cc: u8) -> bool {
+    fn get_reg8(&self, reg: Reg8) -> u8 {
+        match reg {
+            Reg8::HL => self.bus.r8(self.reg.r16(Reg16::HL)),
+            _ => self.reg.r8(reg)
+        }
+    }
+    fn set_reg8(&mut self, reg: Reg8, value: u8) {
+        match reg {
+            Reg8::HL => self.bus.w8(self.reg.r16(Reg16::HL), value),
+            _ => self.reg.w8(reg, value)
+        }
+    }
+    fn get_reg16(&self, reg: Reg16) -> u16 {
+        self.reg.r16(reg)
+    }
+    fn set_reg16(&mut self, reg: Reg16, value: u16) {
+        self.reg.w16(reg, value)
+    }
+
+    fn test_cc(&self, cc: Cond) -> bool {
         match cc {
-            0 => self.reg.f_z,
-            1 => !self.reg.f_z,
-            2 => self.reg.f_c,
-            3 => !self.reg.f_c,
-            _ => unreachable!("Invalid condition code")
+            Cond::Z => self.reg.f_z,
+            Cond::NZ => !self.reg.f_z,
+            Cond::C => self.reg.f_c,
+            Cond::NC => !self.reg.f_c,
+            Cond::Always => true
         }
     }
-    fn alu(&mut self, opcode: u8, operand: u8) {
-        let a = self.reg.r8(Reg8::A);
-        let operand = if (opcode == 1 || opcode == 3) && self.reg.f_c {
-            operand.wrapping_add(1)
-        } else {
-            operand
-        };
-        let result = match opcode {
-            0|1 => self.add8(a, operand),
-            2|3|7 => self.sub8(a, operand),
-            4 => { self.reg.set_flags_nhc(false,true,false); a & operand },
-            5 => { self.reg.set_flags_nhc(false,false,false); a ^ operand },
-            6 => { self.reg.set_flags_nhc(false,false,false); a | operand },
-            _ => unreachable!("Invalid ops field")
-                };
-        self.reg.f_z = result == 0;
-        if opcode != 7 {
-            self.reg.w8(Reg8::A, result);
+    fn get_indirect(&mut self, reg: Indirect) -> u16 {
+        match reg {
+            Indirect::BC => self.reg.r16(Reg16::BC),
+            Indirect::DE => self.reg.r16(Reg16::DE),
+            Indirect::HLPlus => {
+                let result = self.reg.r16(Reg16::HL);
+                self.reg.w16(Reg16::HL, result.wrapping_add(1));
+                result
+            },
+            Indirect::HLMinus => {
+                        let result = self.reg.r16(Reg16::HL);
+                self.reg.w16(Reg16::HL, result.wrapping_sub(1));
+                result
+            },
         }
     }
-    fn add8(&mut self, a: u8, b: u8) -> u8 {
-        let (result, carry) = a.overflowing_add(b);
+    fn add8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
+        let b = if carry_in { b + 1 } else { b };
+        let (result, carry_out) = a.overflowing_add(b);
         let half_carry = ((a & 0xf) + (b & 0xf)) & 0x10 != 0;
-        self.reg.set_flags_nhc(false, half_carry, carry);
+        self.reg.set_flags_nhc(false, half_carry, carry_out);
+        self.reg.f_z = result == 0;
         result
     }
-    fn sub8(&mut self, a: u8, b: u8) -> u8 {
-        let (result, carry) = a.overflowing_sub(b);
+    fn sub8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
+        let b = if carry_in { b + 1 } else { b };
+        let (result, carry_out) = a.overflowing_sub(b);
         let half_carry = a & 0xf < b & 0xf;
-        self.reg.set_flags_nhc(true, half_carry, carry);
+        self.reg.set_flags_nhc(true, half_carry, carry_out);
+        self.reg.f_z = result == 0;
         result
     }
     fn add16(&mut self, a: u16, b: u16) -> u16 {
@@ -476,45 +632,30 @@ impl CPU {
         self.reg.set_flags_nhc(false, half_carry, carry);
         result
     }
-    fn get_indirect_reg(&mut self, bits: u8) -> Reg16 {
-        match bits {
-            0 => Reg16::BC,
-            2 => Reg16::DE,
-            4 => {
-                let val = self.reg.r16(Reg16::HL).wrapping_add(1);
-                self.reg.w16(Reg16::HL, val);
-                Reg16::HL
-            },
-            6 => {
-                let val = self.reg.r16(Reg16::HL).wrapping_sub(1);
-                self.reg.w16(Reg16::HL, val);
-                Reg16::HL
-            },
-            _ => unreachable!("Invalid indirect reg field")
-        }
+    fn rotate<F>(&mut self, reg: Reg8, f: F)
+    where F: FnOnce(u8, bool) -> (u8, bool) {
+        let value = self.get_reg8(reg);
+        let (result, carry) = f(value, self.reg.f_c);
+        self.reg.f_z = result != 0;
+        self.reg.set_flags_nhc(false, false, carry);
+        self.set_reg8(reg, result);
     }
-    fn inc8(&mut self, a: u8) -> u8 {
-        let result = a.wrapping_add(1);
+    fn logical<F>(&mut self, value: u8, f: F, half_carry: bool)
+    where F: FnOnce(u8,u8) -> u8 {
+        let a = self.reg.r8(Reg8::A);
+        let result = f(a,value);
         self.reg.f_z = result == 0;
-        self.reg.f_n = false;
-        self.reg.f_h = a & 0xf == 0xf;
-        result
-    }
-    fn dec8(&mut self, a: u8) -> u8 {
-        let result = a.wrapping_sub(1);
-        self.reg.f_z = result == 0;
-        self.reg.f_n = true;
-        self.reg.f_h = a & 0xf == 0;
-        result
+        self.reg.set_flags_nhc(false, half_carry, false);
+        self.reg.w8(Reg8::A, result);
     }
     fn ret(&mut self) {
-        let addr = self.mem.r16(self.reg.sp);
+        let addr = self.bus.r16(self.reg.sp);
         self.reg.sp += 2;
         self.reg.pc = addr;
     }
     fn call(&mut self, dest: u16) {
         self.reg.sp -= 2;
-        self.mem.w16(self.reg.sp, self.reg.pc);
+        self.bus.w16(self.reg.sp, self.reg.pc);
         self.reg.pc = dest;
     }
 }

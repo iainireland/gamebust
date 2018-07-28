@@ -5,3 +5,4 @@ authors = ["Iain Ireland <iireland@ualberta.ca>"]
 
 [dependencies]
 sdl2 = "0.31"
+clap = "2.32"
