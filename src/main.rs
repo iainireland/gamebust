@@ -10,6 +10,7 @@ mod cartridge;
 mod gpu;
 mod instructions;
 mod registers;
+mod timer;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;

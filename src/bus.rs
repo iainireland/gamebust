@@ -4,6 +4,7 @@ use std::path::Path;
 use Button;
 use cartridge::Cartridge;
 use gpu::{BgMap,Gpu};
+use timer::Timer;
 
 const BOOT_ROM_SIZE: usize = 0x100;
 const INTERNAL_RAM_SIZE: usize = 0x2000;
@@ -30,8 +31,8 @@ impl Joypad {
         self.button_state &= !button.value();
     }
     pub fn read(&self) -> u8 {
-        assert!(self.input_lines & 0x10 == 1 ||
-                self.input_lines & 0x20 == 1, "FF00: Only one line should be set low");
+        assert!(self.input_lines & 0x10 == 0 ||
+                self.input_lines & 0x20 == 0, "FF00: Only one line should be set low ({})", self.input_lines);
         if self.input_lines & 0x10 == 0 {
             return self.button_state | 0xf0;
         }
@@ -52,6 +53,7 @@ pub struct Bus {
     cartridge: Cartridge,
     gpu: Gpu,
     joypad: Joypad,
+    timer: Timer,
     internal_ram: [u8; INTERNAL_RAM_SIZE],
     zero_page: [u8; ZERO_PAGE_SIZE],
     interrupts_flag: u8,
@@ -69,6 +71,7 @@ impl Bus {
             cartridge: Cartridge::new(buffer),
             gpu: Gpu::new(),
             joypad: Joypad::new(),
+            timer: Timer::new(),
             internal_ram: [0; INTERNAL_RAM_SIZE],
             zero_page: [0; ZERO_PAGE_SIZE],
             interrupts_flag: 0,
@@ -88,7 +91,10 @@ impl Bus {
             0xfea0 ... 0xfeff => 0,
             0xff00            => self.joypad.read(),
             0xff01 ... 0xff02 => { println!("UNIMPL: SERIAL PORT READ"); 0}, //unimplemented!("Serial port"),
-            0xff03 ... 0xff07 => unimplemented!("Timer"),
+            0xff04            => self.interrupts.get(),
+            0xff05            => self.timer.get_counter(),
+            0xff06            => self.timer.get_modulo(),
+            0xff07            => self.timer.get_control(),
             0xff0f            => self.interrupts_flag,
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
@@ -125,8 +131,11 @@ impl Bus {
             0xfea0 ... 0xfeff => {},
             0xff00            => self.joypad.write(val),
             0xff01 ... 0xff02 => println!("UNIMPL: SERIAL PORT WRITE"), //unimplemented!("Serial port"),
-            0xff03 ... 0xff07 => unimplemented!("Timer"),
             0xff0f            => self.interrupts_flag = val,
+            0xff04            => self.timer.reset_divider(),
+            0xff05            => self.timer.set_counter(val),
+            0xff06            => self.timer.set_modulo(val),
+            0xff07            => self.timer.set_control(val),
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
             0xff20 ... 0xff26 |
@@ -169,6 +178,7 @@ impl Bus {
         self.joypad.key_up(button);
     }
     pub fn update(&mut self, cycles: u32) -> bool {
+        self.timer.update(cycles);
         let redraw = self.gpu.update(cycles);
         redraw
     }
