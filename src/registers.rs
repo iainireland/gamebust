@@ -131,7 +131,7 @@ impl Registers {
             Reg8::E => self.e,
             Reg8::H => self.h,
             Reg8::L => self.l,
-            Reg8::HL => unimplemented!("TODO: reg.r/w and mem.r/w --> CPU.mem8/reg8"),
+            Reg8::HL => panic!("HL needs special handling")
         }
     }
     pub fn w8(&mut self, reg: Reg8, value: u8) {
@@ -143,7 +143,7 @@ impl Registers {
             Reg8::E => self.e = value,
             Reg8::H => self.h = value,
             Reg8::L => self.l = value,
-            Reg8::HL => unimplemented!("TODO: reg.r/w and mem.r/w --> CPU.mem8/reg8"),
+            Reg8::HL => panic!("HL needs special handling")
         }
     }
     pub fn r16(&self, reg: Reg16) -> u16 {

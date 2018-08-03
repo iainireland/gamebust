@@ -1,40 +1,48 @@
 use std::io::Read;
 use std::path::Path;
 
+use Button;
+use cartridge::Cartridge;
+use gpu::{BgMap,Gpu};
+
 const BOOT_ROM_SIZE: usize = 0x100;
+const INTERNAL_RAM_SIZE: usize = 0x2000;
 const ZERO_PAGE_SIZE: usize = 0x7f;
 
-struct Cartridge {
-    data: Vec<u8>,
+
+
+struct Joypad {
+    button_state: u8,
+    input_lines: u8,
 }
 
-impl Cartridge {
-    pub fn new(data: Vec<u8>) -> Self {
-        Cartridge {
-            data: data
+impl Joypad {
+    pub fn new() -> Self {
+        Joypad {
+            button_state: 0,
+            input_lines: 0
         }
     }
-    pub fn r8(&self, addr: u16) -> u8 {
-        self.data[addr as usize]
+    pub fn key_down(&mut self, button: Button) {
+        self.button_state |= button.value();
     }
-    pub fn w8(&mut self, addr: u16, val: u8) {
-
+    pub fn key_up(&mut self, button: Button) {
+        self.button_state &= !button.value();
     }
-}
-
-struct GPU {
-
-}
-
-impl GPU {
-    pub fn new() -> Self {
-        GPU {}
-    }
-    pub fn r8(&self, addr: u16) -> u8 {
+    pub fn read(&self) -> u8 {
+        assert!(self.input_lines & 0x10 == 1 ||
+                self.input_lines & 0x20 == 1, "FF00: Only one line should be set low");
+        if self.input_lines & 0x10 == 0 {
+            return self.button_state | 0xf0;
+        }
+        if self.input_lines & 0x20 == 0 {
+            return ((self.button_state & 0xf0) >> 4) | 0xf0;
+        }
         0
     }
-    pub fn w8(&mut self, addr: u16, val: u8) {
-
+    pub fn write(&mut self, val: u8) {
+        assert!(val & !0x30 == 0, "FF00: Writing to a non-input line");
+        self.input_lines = val;
     }
 }
 
@@ -42,8 +50,12 @@ pub struct Bus {
     bootrom: [u8; BOOT_ROM_SIZE],
     bootrom_active: bool,
     cartridge: Cartridge,
-    gpu: GPU,
+    gpu: Gpu,
+    joypad: Joypad,
+    internal_ram: [u8; INTERNAL_RAM_SIZE],
     zero_page: [u8; ZERO_PAGE_SIZE],
+    interrupts_flag: u8,
+    interrupts_enable: u8
 }
 
 impl Bus {
@@ -55,17 +67,48 @@ impl Bus {
             bootrom_active: true,
             bootrom: *include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/boot.rom")),
             cartridge: Cartridge::new(buffer),
-            gpu: GPU::new(),
+            gpu: Gpu::new(),
+            joypad: Joypad::new(),
+            internal_ram: [0; INTERNAL_RAM_SIZE],
             zero_page: [0; ZERO_PAGE_SIZE],
+            interrupts_flag: 0,
+            interrupts_enable: 0,
         })
     }
     pub fn r8(&self, addr: u16) -> u8 {
         match addr {
             0x0000 ... 0x00ff if self.bootrom_active => self.bootrom[addr as usize],
             0x0000 ... 0x7fff => self.cartridge.r8(addr),
-            0x8000 ... 0x9fff => self.gpu.r8(addr),
-            0xff00 ... 0xff7f => 0, //{println!("Read IO reg: {:04x}", addr); 0},
+            0x8000 ... 0x97ff => self.gpu.read_tile_ram(addr - 0x8000),
+            0x9800 ... 0x9bff => self.gpu.read_bg_map(addr - 0x9800, BgMap::Map1),
+            0x9c00 ... 0x9fff => self.gpu.read_bg_map(addr - 0x9c00, BgMap::Map2),
+            0xc000 ... 0xdfff => self.internal_ram[addr as usize - 0xc000],
+            0xe000 ... 0xfdff => self.internal_ram[addr as usize - 0xe000],
+            0xfe00 ... 0xfe9f => self.gpu.read_sprite_ram(addr - 0xfe00),
+            0xfea0 ... 0xfeff => 0,
+            0xff00            => self.joypad.read(),
+            0xff01 ... 0xff02 => { println!("UNIMPL: SERIAL PORT READ"); 0}, //unimplemented!("Serial port"),
+            0xff03 ... 0xff07 => unimplemented!("Timer"),
+            0xff0f            => self.interrupts_flag,
+            0xff10 ... 0xff14 |
+            0xff16 ... 0xff1e |
+            0xff20 ... 0xff26 |
+            0xff30 ... 0xff3f => { println!("Read IO reg (sound): {:04x}", addr); 0},
+            0xff40            => self.gpu.get_control(),
+            0xff41            => self.gpu.get_stat(),
+            0xff42            => self.gpu.get_scroll_y(),
+            0xff43            => self.gpu.get_scroll_x(),
+            0xff44            => self.gpu.get_ly(),
+            0xff45            => self.gpu.get_ly_compare(),
+            0xff46            => unimplemented!("DMA"),
+            0xff47            => self.gpu.get_bg_palette(),
+            0xff48            => self.gpu.get_obj0_palette(),
+            0xff49            => self.gpu.get_obj1_palette(),
+            0xff4a            => self.gpu.get_window_y(),
+            0xff4b            => self.gpu.get_window_x(),
+            0xff00 ... 0xff7f => { println!("Read IO reg: {:04x}", addr); 0},
             0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80],
+            0xffff            => self.interrupts_enable,
             _ => unimplemented!("Unknown address: {:04x}", addr)
         }
     }
@@ -73,12 +116,39 @@ impl Bus {
         match addr {
             0x0000 ... 0x00FF if self.bootrom_active => panic!("Writing to boot rom"),
             0x0000 ... 0x7fff => self.cartridge.w8(addr, val),
-            0x8000 ... 0x9fff => self.gpu.w8(addr, val),
-            0xff00 ... 0xff7f => {}, //println!("Write IO reg: {:04x} = {}", addr, val),
+            0x8000 ... 0x97ff => self.gpu.write_tile_ram(addr - 0x8000, val),
+            0x9800 ... 0x9bff => self.gpu.write_bg_map(addr - 0x9800, BgMap::Map1, val),
+            0x9c00 ... 0x9fff => self.gpu.write_bg_map(addr - 0x9c00, BgMap::Map2, val),
+            0xc000 ... 0xdfff => self.internal_ram[addr as usize - 0xc000] = val,
+            0xe000 ... 0xfdff => self.internal_ram[addr as usize - 0xe000] = val,
+            0xfe00 ... 0xfe9f => self.gpu.write_sprite_ram(addr - 0xfe00, val),
+            0xfea0 ... 0xfeff => {},
+            0xff00            => self.joypad.write(val),
+            0xff01 ... 0xff02 => println!("UNIMPL: SERIAL PORT WRITE"), //unimplemented!("Serial port"),
+            0xff03 ... 0xff07 => unimplemented!("Timer"),
+            0xff0f            => self.interrupts_flag = val,
+            0xff10 ... 0xff14 |
+            0xff16 ... 0xff1e |
+            0xff20 ... 0xff26 |
+            0xff30 ... 0xff3f => println!("Write IO reg (sound): {:04x} = {}", addr, val),
+            0xff40            => self.gpu.set_control(val),
+            0xff41            => self.gpu.set_stat(val),
+            0xff42            => self.gpu.set_scroll_y(val),
+            0xff43            => self.gpu.set_scroll_x(val),
+            0xff44            => self.gpu.reset_ly(),
+            0xff45            => self.gpu.set_ly_compare(val),
+            0xff46            => unimplemented!("DMA"),
+            0xff47            => self.gpu.set_bg_palette(val),
+            0xff48            => self.gpu.set_obj0_palette(val),
+            0xff49            => self.gpu.set_obj1_palette(val),
+            0xff4a            => self.gpu.set_window_y(val),
+            0xff4b            => self.gpu.set_window_x(val),
+            0xff50            => self.bootrom_active = false,
+            0xff00 ... 0xff7f => println!("Write IO reg: {:04x} = {}", addr, val),
             0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80] = val,
+            0xffff            => self.interrupts_enable = val,
             _ => unimplemented!("Unknown address: {:04x}", addr)
         }
-        //self.data[addr as usize] = val;
     }
 
     pub fn r16(&self, addr: u16) -> u16 {
@@ -92,8 +162,17 @@ impl Bus {
         self.w8(addr, lo as u8);
         self.w8(addr+1, hi as u8);
     }
-    // pub fn write(&mut self, addr: usize, data: &[u8]) {
-    //     assert!(addr + data.len() < MEM_SIZE);
-    //     self.data[addr..addr + data.len()].copy_from_slice(data);
-    // }
+    pub fn key_down(&mut self, button: Button) {
+        self.joypad.key_down(button);
+    }
+    pub fn key_up(&mut self, button: Button) {
+        self.joypad.key_up(button);
+    }
+    pub fn update(&mut self, cycles: u32) -> bool {
+        let redraw = self.gpu.update(cycles);
+        redraw
+    }
+    pub fn get_screen_buffer(&self) -> &[u8] {
+        self.gpu.get_screen_buffer()
+    }
 }
