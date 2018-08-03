@@ -631,25 +631,30 @@ impl CPU {
             }
         }
     }
+    #[inline(always)]
     fn get_reg8(&self, reg: Reg8) -> u8 {
         match reg {
             Reg8::HL => self.bus.r8(self.reg.r16(Reg16::HL)),
             _ => self.reg.r8(reg)
         }
     }
+    #[inline(always)]
     fn set_reg8(&mut self, reg: Reg8, value: u8) {
         match reg {
             Reg8::HL => self.bus.w8(self.reg.r16(Reg16::HL), value),
             _ => self.reg.w8(reg, value)
         }
     }
+    #[inline(always)]
     fn get_reg16(&self, reg: Reg16) -> u16 {
         self.reg.r16(reg)
     }
+    #[inline(always)]
     fn set_reg16(&mut self, reg: Reg16, value: u16) {
         self.reg.w16(reg, value)
     }
 
+    #[inline(always)]
     fn test_cc(&self, cc: Cond) -> bool {
         match cc {
             Cond::Z => self.reg.f_z,
@@ -659,6 +664,7 @@ impl CPU {
             Cond::Always => true
         }
     }
+    #[inline(always)]
     fn get_indirect(&mut self, reg: Indirect) -> u16 {
         match reg {
             Indirect::BC => self.reg.r16(Reg16::BC),
@@ -675,6 +681,7 @@ impl CPU {
             },
         }
     }
+    #[inline(always)]
     fn add8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
         let b = if carry_in { b + 1 } else { b };
         let (result, carry_out) = a.overflowing_add(b);
@@ -683,6 +690,7 @@ impl CPU {
         self.reg.f_z = result == 0;
         result
     }
+    #[inline(always)]
     fn sub8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
         let b = if carry_in { b + 1 } else { b };
         let (result, carry_out) = a.overflowing_sub(b);
@@ -691,12 +699,14 @@ impl CPU {
         self.reg.f_z = result == 0;
         result
     }
+    #[inline(always)]
     fn add16(&mut self, a: u16, b: u16) -> u16 {
         let (result,carry) = a.overflowing_add(b);
         let half_carry = ((a & 0xff) + (b & 0xff)) & 0x100 != 0;
         self.reg.set_flags_nhc(false, half_carry, carry);
         result
     }
+    #[inline(always)]
     fn rotate<F>(&mut self, reg: Reg8, f: F)
     where F: FnOnce(u8, bool) -> (u8, bool) {
         let value = self.get_reg8(reg);
@@ -705,6 +715,7 @@ impl CPU {
         self.reg.set_flags_nhc(false, false, carry);
         self.set_reg8(reg, result);
     }
+    #[inline(always)]
     fn logical<F>(&mut self, value: u8, f: F, half_carry: bool)
     where F: FnOnce(u8,u8) -> u8 {
         let a = self.reg.r8(Reg8::A);
@@ -713,11 +724,13 @@ impl CPU {
         self.reg.set_flags_nhc(false, half_carry, false);
         self.reg.w8(Reg8::A, result);
     }
+    #[inline(always)]
     fn ret(&mut self) {
         let addr = self.bus.r16(self.reg.sp);
         self.reg.sp += 2;
         self.reg.pc = addr;
     }
+    #[inline(always)]
     fn call(&mut self, dest: u16) {
         self.reg.sp -= 2;
         self.bus.w16(self.reg.sp, self.reg.pc);

@@ -20,9 +20,11 @@ struct Palette {
 }
 
 impl Palette {
+    #[inline(always)]
     pub fn get(&self, index: usize) -> u8 {
         self.colours[index]
     }
+    #[inline(always)]
     pub fn from_u8(raw: u8) -> Self {
         const BRIGHTNESS: [u8; 4] = [0xff, 0xcc, 0x77, 0x00];
         let mut colours = [0; 4];
@@ -32,6 +34,7 @@ impl Palette {
         }
         Palette { colours: colours }
     }
+    #[inline(always)]
     pub fn to_u8(&self) -> u8 {
         self.colours[0]      | self.colours[1] << 2 |
         self.colours[2] << 4 | self.colours[3] << 6
@@ -43,6 +46,7 @@ enum Mode {
 }
 
 impl Mode {
+    #[inline(always)]
     pub fn get_bits(&self) -> u8 {
         match self {
             Mode::HBlank => 0,
@@ -160,6 +164,7 @@ impl Gpu {
         }
         vblank
     }
+    #[inline(always)]
     fn switch_mode(&mut self, new_mode: Mode) {
         self.mode = new_mode;
         let mode_cycles = match self.mode {
@@ -213,6 +218,7 @@ impl Gpu {
     fn render_sprites(&mut self) {
         unimplemented!("Sprites");
     }
+    #[inline(always)]
     fn draw_pixel(&mut self, x: usize, colour: u8) {
             let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
             let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
@@ -222,6 +228,7 @@ impl Gpu {
             screen_buffer_slice[x as usize * 3 + 2] = colour;
     }
 
+    #[inline(always)]
     pub fn read_tile_ram(&self, addr: u16) -> u8 {
         let line = self.tile_lines[addr as usize / 2];
         if addr & 0x1 == 0 {
@@ -230,6 +237,7 @@ impl Gpu {
             (line >> 8) as u8
         }
     }
+    #[inline(always)]
     pub fn write_tile_ram(&mut self, addr: u16, val: u8) {
         let index = addr as usize / 2;
         let line = self.tile_lines[index];
@@ -239,20 +247,25 @@ impl Gpu {
             (line & 0x0f) | ((val as u16) << 8)
         };
     }
+    #[inline(always)]
     pub fn read_bg_map(&self, addr: u16, bg_map: BgMap) -> u8 {
         let index = match bg_map { BgMap::Map1 => 0, BgMap::Map2 => 1 };
         self.bg_map[index][addr as usize]
     }
+    #[inline(always)]
     pub fn write_bg_map(&mut self, addr: u16, bg_map: BgMap, val: u8) {
         let index = match bg_map { BgMap::Map1 => 0, BgMap::Map2 => 1 };
         self.bg_map[index][addr as usize] = val;
     }
+    #[inline(always)]
     pub fn read_sprite_ram(&self, addr: u16) -> u8 {
         self.sprite_ram[addr as usize]
     }
+    #[inline(always)]
     pub fn write_sprite_ram(&mut self, addr: u16, val: u8) {
         self.sprite_ram[addr as usize] = val;
     }
+    #[inline(always)]
     pub fn get_control(&self) -> u8 {
         let mut result = 0;
         if self.bg_enabled                           { result |= 1 << 0; }
@@ -265,6 +278,7 @@ impl Gpu {
         if self.lcd_enabled                          { result |= 1 << 7; }
         result
     }
+    #[inline(always)]
     pub fn set_control(&mut self, value: u8) {
         self.bg_enabled = (value & (1 << 0)) != 0;
         self.sprites_enabled = (value & (1 << 1)) != 0;
@@ -275,6 +289,7 @@ impl Gpu {
         self.active_window_map = if (value & (1 << 6)) == 0 { BgMap::Map1 } else { BgMap::Map2 };
         self.lcd_enabled = (value & (1 << 7)) != 0;
     }
+    #[inline(always)]
     pub fn get_stat(&self) -> u8 {
         let mut result = self.mode.get_bits();
         if self.ly == self.ly_compare { result |= 1 << 2 };
@@ -285,66 +300,86 @@ impl Gpu {
 
         result
     }
+    #[inline(always)]
     pub fn set_stat(&mut self, value: u8) {
         self.hblank_check_enabled = (value & (1 << 3)) != 0;
         self.vblank_check_enabled = (value & (1 << 4)) != 0;
         self.oam_check_enabled = (value & (1 << 5)) != 0;
         self.ly_check_enabled     = (value & (1 << 6)) != 0;
     }
+    #[inline(always)]
     pub fn get_scroll_x(&self) -> u8 {
         self.scroll_x
     }
+    #[inline(always)]
     pub fn set_scroll_x(&mut self, value: u8) {
         self.scroll_x = value;
     }
+    #[inline(always)]
     pub fn get_scroll_y(&self) -> u8 {
         self.scroll_y
     }
+    #[inline(always)]
     pub fn set_scroll_y(&mut self, value: u8) {
         self.scroll_y = value;
     }
+    #[inline(always)]
     pub fn get_ly(&self) -> u8 {
         if self.lcd_enabled { self.ly } else { 0 }
     }
+    #[inline(always)]
     pub fn reset_ly(&mut self) {
         self.ly = 0;
     }
+    #[inline(always)]
     pub fn get_ly_compare(&self) -> u8 {
         self.ly_compare
     }
+    #[inline(always)]
     pub fn set_ly_compare(&mut self, value: u8) {
         self.ly_compare = value;
     }
+    #[inline(always)]
     pub fn get_bg_palette(&self) -> u8 {
         self.bg_palette.to_u8()
     }
+    #[inline(always)]
     pub fn set_bg_palette(&mut self, value: u8) {
         self.bg_palette = Palette::from_u8(value);
     }
+    #[inline(always)]
     pub fn get_obj0_palette(&self) -> u8 {
         self.obj0_palette.to_u8()
     }
+    #[inline(always)]
     pub fn set_obj0_palette(&mut self, value: u8) {
         self.obj0_palette = Palette::from_u8(value);
     }
+    #[inline(always)]
     pub fn get_obj1_palette(&self) -> u8 {
         self.obj1_palette.to_u8()
     }
+    #[inline(always)]
     pub fn set_obj1_palette(&mut self, value: u8) {
         self.obj1_palette = Palette::from_u8(value);
     }
+    #[inline(always)]
     pub fn get_window_x(&self) -> u8 {
         self.window_x
     }
+    #[inline(always)]
     pub fn set_window_x(&mut self, value: u8) {
         self.window_x = value;
     }
+    #[inline(always)]
     pub fn get_window_y(&self) -> u8 {
         self.window_y
     }
+    #[inline(always)]
     pub fn set_window_y(&mut self, value: u8) {
         self.window_y = value;
     }
+    #[inline(always)]
     pub fn get_screen_buffer(&self) -> &[u8] {
         &self.screen_buffer
     }
