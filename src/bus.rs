@@ -1,9 +1,9 @@
 use std::io::Read;
 use std::path::Path;
 
-use Button;
 use cartridge::Cartridge;
 use gpu::{BgMap,Gpu};
+use joypad::{Joypad,Button};
 use timer::Timer;
 
 const BOOT_ROM_SIZE: usize = 0x100;
@@ -11,41 +11,6 @@ const INTERNAL_RAM_SIZE: usize = 0x2000;
 const ZERO_PAGE_SIZE: usize = 0x7f;
 
 
-
-struct Joypad {
-    button_state: u8,
-    input_lines: u8,
-}
-
-impl Joypad {
-    pub fn new() -> Self {
-        Joypad {
-            button_state: 0,
-            input_lines: 0
-        }
-    }
-    pub fn key_down(&mut self, button: Button) {
-        self.button_state |= button.value();
-    }
-    pub fn key_up(&mut self, button: Button) {
-        self.button_state &= !button.value();
-    }
-    pub fn read(&self) -> u8 {
-        assert!(self.input_lines & 0x10 == 0 ||
-                self.input_lines & 0x20 == 0, "FF00: Only one line should be set low ({})", self.input_lines);
-        if self.input_lines & 0x10 == 0 {
-            return self.button_state | 0xf0;
-        }
-        if self.input_lines & 0x20 == 0 {
-            return ((self.button_state & 0xf0) >> 4) | 0xf0;
-        }
-        0
-    }
-    pub fn write(&mut self, val: u8) {
-        assert!(val & !0x30 == 0, "FF00: Writing to a non-input line");
-        self.input_lines = val;
-    }
-}
 
 pub struct Bus {
     bootrom: [u8; BOOT_ROM_SIZE],
@@ -91,7 +56,7 @@ impl Bus {
             0xfea0 ... 0xfeff => 0,
             0xff00            => self.joypad.read(),
             0xff01 ... 0xff02 => { println!("UNIMPL: SERIAL PORT READ"); 0}, //unimplemented!("Serial port"),
-            0xff04            => self.interrupts.get(),
+            0xff04            => self.timer.get_divider(),
             0xff05            => self.timer.get_counter(),
             0xff06            => self.timer.get_modulo(),
             0xff07            => self.timer.get_control(),
@@ -131,7 +96,7 @@ impl Bus {
             0xfea0 ... 0xfeff => {},
             0xff00            => self.joypad.write(val),
             0xff01 ... 0xff02 => println!("UNIMPL: SERIAL PORT WRITE"), //unimplemented!("Serial port"),
-            0xff0f            => self.interrupts_flag = val,
+            0xff0f            => self.interrupts_flag = val & 0xe0,
             0xff04            => self.timer.reset_divider(),
             0xff05            => self.timer.set_counter(val),
             0xff06            => self.timer.set_modulo(val),
