@@ -59,6 +59,9 @@ fn main() {
     let mut cpu = CPU::new(Path::new(&input_file));
     let mut pause = false;
     let mut frame_start = Instant::now();
+    let mut good_frames = 0;
+    let mut bad_frames = 0;
+
 
     'eventloop: loop {
 
@@ -86,6 +89,7 @@ fn main() {
 
         let instr = cpu.fetch();
         let cycles = cpu.exec(instr);
+
         let redraw = cpu.bus.update(cycles);
         if redraw {
             const MICROS_PER_FRAME: u64 = 1_000_000 / 60;
@@ -99,8 +103,12 @@ fn main() {
             frame_start = Instant::now();
             if frame_time < MICROS_PER_FRAME {
                 ::std::thread::sleep(Duration::from_micros(MICROS_PER_FRAME - frame_time));
+                good_frames += 1;
             } else {
-                println!("Frame over budget! {}", frame_time);
+                bad_frames += 1;
+            }
+            if (good_frames + bad_frames) % 100 == 0 {
+                println!("Good: {} / {}", good_frames, good_frames + bad_frames);
             }
         }
     }
