@@ -4,6 +4,7 @@ use std::path::Path;
 use cartridge::Cartridge;
 use gpu::{BgMap,Gpu};
 use joypad::{Joypad,Button};
+use serial::Serial;
 use timer::Timer;
 
 const BOOT_ROM_SIZE: usize = 0x100;
@@ -18,6 +19,7 @@ pub struct Bus {
     cartridge: Cartridge,
     gpu: Gpu,
     joypad: Joypad,
+    serial: Serial,
     timer: Timer,
     internal_ram: [u8; INTERNAL_RAM_SIZE],
     zero_page: [u8; ZERO_PAGE_SIZE],
@@ -36,6 +38,7 @@ impl Bus {
             cartridge: Cartridge::new(buffer),
             gpu: Gpu::new(),
             joypad: Joypad::new(),
+            serial: Serial::new(),
             timer: Timer::new(),
             internal_ram: [0; INTERNAL_RAM_SIZE],
             zero_page: [0; ZERO_PAGE_SIZE],
@@ -55,7 +58,8 @@ impl Bus {
             0xfe00 ... 0xfe9f => self.gpu.read_sprite_ram(addr - 0xfe00),
             0xfea0 ... 0xfeff => 0,
             0xff00            => self.joypad.read(),
-            0xff01 ... 0xff02 => { println!("UNIMPL: SERIAL PORT READ"); 0}, //unimplemented!("Serial port"),
+            0xff01            => self.serial.get_transfer(),
+            0xff02            => self.serial.get_control(),
             0xff04            => self.timer.get_divider(),
             0xff05            => self.timer.get_counter(),
             0xff06            => self.timer.get_modulo(),
@@ -95,8 +99,8 @@ impl Bus {
             0xfe00 ... 0xfe9f => self.gpu.write_sprite_ram(addr - 0xfe00, val),
             0xfea0 ... 0xfeff => {},
             0xff00            => self.joypad.write(val),
-            0xff01 ... 0xff02 => println!("UNIMPL: SERIAL PORT WRITE"), //unimplemented!("Serial port"),
-            0xff0f            => self.interrupts_flag = val & 0xe0,
+            0xff01            => self.serial.set_transfer(val),
+            0xff02            => self.serial.set_control(val),
             0xff04            => self.timer.reset_divider(),
             0xff05            => self.timer.set_counter(val),
             0xff06            => self.timer.set_modulo(val),

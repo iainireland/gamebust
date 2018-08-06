@@ -12,6 +12,7 @@ mod gpu;
 mod instructions;
 mod joypad;
 mod registers;
+mod serial;
 mod timer;
 
 use sdl2::event::Event;
