@@ -6,4 +6,5 @@ authors = ["Iain Ireland <iireland@ualberta.ca>"]
 [dependencies]
 bitflags = "1.0"
 clap = "2.32"
+rustyline = "1.0"
 sdl2 = "0.31"

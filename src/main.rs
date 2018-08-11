@@ -2,6 +2,7 @@
 extern crate bitflags;
 #[macro_use]
 extern crate clap;
+extern crate rustyline;
 extern crate sdl2;
 
 use std::path::Path;
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 mod bus;
 mod cartridge;
 mod cpu;
+mod debugger;
 mod gpu;
 mod instructions;
 mod joypad;
@@ -23,6 +25,7 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 
 use cpu::Cpu;
+use debugger::Debugger;
 use joypad::Button;
 
 const SCREEN_WIDTH: usize = 160;
@@ -33,13 +36,11 @@ fn main() {
                             (version: "0.1")
                             (author: "Iain Ireland")
                             (about: "gameboy emulator")
-                            (@arg DEBUG: -d --debug "Turns on debug mode")
                             (@arg INPUT: +required "Sets the input file to use")
 
     ).get_matches();
 
     let input_file = matches.value_of("INPUT").unwrap();
-    let mut debug = matches.is_present("DEBUG");
 
     let scale = 5;
 
@@ -63,11 +64,8 @@ fn main() {
 
     let mut events = sdl_context.event_pump().unwrap();
     let mut cpu = Cpu::new(Path::new(&input_file));
-    let mut pause = false;
+    let mut debugger = Debugger::new();
     let mut frame_start = Instant::now();
-    let mut good_frames = 0;
-    let mut bad_frames = 0;
-
 
     'eventloop: loop {
 
@@ -77,9 +75,7 @@ fn main() {
                 Event::KeyDown { scancode: Some(Scancode::Escape), .. } =>
                     break 'eventloop,
                 Event::KeyDown { scancode: Some(Scancode::D), .. } =>
-                    debug = !debug,
-                Event::KeyDown { scancode: Some(Scancode::P), .. } =>
-                    pause = !pause,
+                    debugger.pause(),
                 Event::KeyDown { scancode: scan, .. } =>
                     if let Some(button) = Button::from_scancode(scan.unwrap()) {
                         cpu.key_down(button)
@@ -91,30 +87,26 @@ fn main() {
                 _ => {}
             }
         }
-        if pause { continue; }
 
-        let instr = cpu.fetch();
-        let cycles = cpu.exec(instr);
+        debugger.check_breakpoints(&cpu);
+        if debugger.is_paused() {
+            debugger.debug(&mut cpu);
+        }
 
-        let redraw = cpu.update(cycles);
-        if redraw {
+        let cycles = cpu.step();
+        cpu.update(cycles);
+
+        if cpu.needs_redraw() {
             const MICROS_PER_FRAME: u64 = 1_000_000 / 60;
             let data = cpu.get_screen_buffer();
-            line_texture.update(None, data, SCREEN_WIDTH * 3).unwrap();
-            let line_rect = Rect::new(0, 0, SCREEN_WIDTH as u32 * scale, SCREEN_HEIGHT as u32 * scale);
-            canvas.copy(&line_texture, None, line_rect).unwrap();
+            screen_texture.update(None, data, SCREEN_WIDTH * 3).unwrap();
+            canvas.copy(&screen_texture, None, screen_rect).unwrap();
             canvas.present();
 
             let frame_time = frame_start.elapsed().subsec_micros() as u64;
             frame_start = Instant::now();
             if frame_time < MICROS_PER_FRAME {
                 ::std::thread::sleep(Duration::from_micros(MICROS_PER_FRAME - frame_time));
-                good_frames += 1;
-            } else {
-                bad_frames += 1;
-            }
-            if (good_frames + bad_frames) % 100 == 0 {
-                println!("Good: {} / {}", good_frames, good_frames + bad_frames);
             }
         }
     }
