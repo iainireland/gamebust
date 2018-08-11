@@ -1,4 +1,6 @@
 #[macro_use]
+extern crate bitflags;
+#[macro_use]
 extern crate clap;
 extern crate sdl2;
 
@@ -52,9 +54,10 @@ fn main() {
         .unwrap();
     let mut canvas = window.into_canvas().build().unwrap();
     let texture_creator = canvas.texture_creator();
-    let mut line_texture = texture_creator.
+    let mut screen_texture = texture_creator.
         create_texture_streaming(sdl2::pixels::PixelFormatEnum::RGB24,
                                  SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32).unwrap();
+    let screen_rect = Rect::new(0, 0, SCREEN_WIDTH as u32 * scale, SCREEN_HEIGHT as u32 * scale);
     canvas.set_draw_color(Color::RGB(0,0,0));
     canvas.clear();
 

@@ -5,13 +5,24 @@ use registers::{Registers,Reg8,Reg16,Indirect};
 use instructions::{Cond,Instr};
 use joypad::Button;
 
+bitflags! {
+    pub struct Interrupt: u8 {
+        const VBLANK   = 0b00001;
+        const LCD_STAT = 0b00010;
+        const TIMER    = 0b00100;
+        const SERIAL   = 0b01000;
+        const JOYPAD   = 0b10000;
+    }
+}
+
 pub struct Cpu {
     reg: Registers,
     bus: Bus,
-    interrupts: bool,
-    interrupts_buffer: bool,
+    interrupts_enabled: bool,
+    interrupts_buffer: Option<bool>,
     halted: bool,
-    stopped: bool
+    stopped: bool,
+    redraw: bool
 }
 
 impl Cpu {
@@ -19,11 +30,46 @@ impl Cpu {
         Cpu {
             reg: Registers::new(),
             bus: Bus::new(cartridge_path).expect("File not found"),
-            interrupts: false,
-            interrupts_buffer: false,
+            interrupts_enabled: false,
+            interrupts_buffer: None,
             halted: false,
             stopped: false,
+            redraw: false
         }
+    }
+    pub fn step(&mut self) ->  u32 {
+        if self.stopped {
+            return 0;
+        }
+
+        if self.halted {
+            unimplemented!("Halted");
+        }
+        let cycles = match self.bus.check_interrupts() {
+            Some(ref interrupt) if self.interrupts_enabled => {
+                self.interrupts_enabled = false;
+                let dest = match *interrupt {
+                    Interrupt::VBLANK   => 0x40,
+                    Interrupt::LCD_STAT => 0x48,
+                    Interrupt::TIMER    => 0x50,
+                    Interrupt::SERIAL   => 0x58,
+                    Interrupt::JOYPAD   => 0x60,
+                    _ => unreachable!("Only one bit can be set.")
+                };
+                self.call(dest);
+                20
+            },
+            _ => {
+                let instr = self.fetch();
+                let cycles = self.exec(instr);
+                cycles
+            }
+        };
+        if let Some(interrupt) = self.interrupts_buffer {
+            self.interrupts_enabled = interrupt;
+            self.interrupts_buffer = None;
+        }
+        cycles
     }
     pub fn fetch(&mut self) -> Instr {
         let opcode = self.imm8();
@@ -139,6 +185,7 @@ impl Cpu {
             Instr::Nop => 4,
             Instr::Stop => {
                 self.stopped = true;
+                self.redraw = true;
                 4
             },
             Instr::StoreSP(addr) => {
@@ -351,7 +398,7 @@ impl Cpu {
             },
             Instr::RetI => {
                 self.ret();
-                self.interrupts = true;
+                self.interrupts_enabled = true;
                 16
             },
             Instr::StoreIO(offset) => {
@@ -425,11 +472,11 @@ impl Cpu {
                 16
             },
             Instr::DisableInterrupts => {
-                self.interrupts_buffer = false;
+                self.interrupts_buffer = Some(false);
                 4
             },
             Instr::EnableInterrupts => {
-                self.interrupts_buffer = true;
+                self.interrupts_buffer = Some(true);
                 4
             },
             Instr::Call(dest, cond) => {
@@ -602,16 +649,31 @@ impl Cpu {
         self.bus.w16(self.reg.sp, self.reg.pc);
         self.reg.pc = dest;
     }
+
     pub fn key_down(&mut self, button: Button) {
+        if self.stopped { // TODO: test input lines
+        }
         self.bus.key_down(button);
     }
     pub fn key_up(&mut self, button: Button) {
         self.bus.key_up(button);
     }
-    pub fn update(&mut self, cycles: u32) -> bool {
-        self.bus.update(cycles)
+    pub fn update(&mut self, cycles: u32) {
+        self.redraw = self.bus.update(cycles);
     }
     pub fn get_screen_buffer(&mut self) -> &[u8] {
-        self.bus.get_screen_buffer()
+        if self.stopped {
+            &::gpu::STOPPED_SCREEN
+        } else {
+            self.bus.get_screen_buffer()
+        }
+    }
+    pub fn needs_redraw(&mut self) -> bool {
+        let result = self.redraw;
+        self.redraw = false;
+        result
+    }
+    pub fn get_pc(&self) -> u16 {
+        self.reg.pc
     }
 }

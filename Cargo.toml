@@ -4,5 +4,6 @@ version = "0.1.0"
 authors = ["Iain Ireland <iireland@ualberta.ca>"]
 
 [dependencies]
-sdl2 = "0.31"
+bitflags = "1.0"
 clap = "2.32"
+sdl2 = "0.31"

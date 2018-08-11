@@ -1,3 +1,4 @@
+use cpu::Interrupt;
 use {SCREEN_WIDTH,SCREEN_HEIGHT};
 
 const TILE_LINES_SIZE: usize = 0x1800 / 2;
@@ -9,6 +10,9 @@ const HBLANK_CYCLES: i32 = 200;
 const VBLANK_CYCLES: i32 = 456;
 const OAM_ACCESS_CYCLES: i32 = 84;
 const VRAM_ACCESS_CYCLES: i32 = 172;
+
+pub const STOPPED_SCREEN: [u8; SCREEN_BUFFER_SIZE] = //[255; SCREEN_BUFFER_SIZE];
+    *include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/stopscreen"));
 
 #[derive(Copy,Clone,Debug)]
 pub enum BgMap {
@@ -123,7 +127,7 @@ impl Gpu {
             cycles_left: 0,
         }
     }
-    pub fn update(&mut self, cycles: u32) -> bool {
+    pub fn update(&mut self, cycles: u32, irq: &mut Interrupt) -> bool {
         const VBLANK_SCANLINES: u8 = 12;
 
         let mut vblank = false;
@@ -138,10 +142,10 @@ impl Gpu {
             Mode::HBlank => {
                 self.ly += 1;
                 if self.ly < SCREEN_HEIGHT as u8 {
-                    self.switch_mode(Mode::OamAccess);
+                    self.switch_mode(Mode::OamAccess, irq);
                 } else {
                     vblank = true;
-                    self.switch_mode(Mode::VBlank);
+                    self.switch_mode(Mode::VBlank, irq);
                 }
 
             },
@@ -149,28 +153,38 @@ impl Gpu {
                 self.ly += 1;
                 if self.ly == SCREEN_HEIGHT as u8 + VBLANK_SCANLINES {
                     self.ly = 0;
-                    self.switch_mode(Mode::OamAccess);
+                    self.switch_mode(Mode::OamAccess, irq);
                 } else {
                     self.cycles_left = VBLANK_CYCLES;
                 }
             },
             Mode::OamAccess => {
-                self.switch_mode(Mode::VramAccess);
+                self.switch_mode(Mode::VramAccess, irq);
             },
             Mode::VramAccess => {
                 self.render_scanline();
-                self.switch_mode(Mode::HBlank);
+                self.switch_mode(Mode::HBlank, irq);
             }
         }
         vblank
     }
     #[inline(always)]
-    fn switch_mode(&mut self, new_mode: Mode) {
+    fn switch_mode(&mut self, new_mode: Mode, irq: &mut Interrupt) {
         self.mode = new_mode;
         let mode_cycles = match self.mode {
-            Mode::HBlank => HBLANK_CYCLES,
-            Mode::VBlank => VBLANK_CYCLES,
-            Mode::OamAccess => OAM_ACCESS_CYCLES,
+            Mode::HBlank => {
+                if self.hblank_check_enabled { irq.insert(Interrupt::LCD_STAT); }
+                HBLANK_CYCLES
+            },
+            Mode::VBlank => {
+                irq.insert(Interrupt::VBLANK);
+                if self.hblank_check_enabled { irq.insert(Interrupt::LCD_STAT); }
+                VBLANK_CYCLES
+            },
+            Mode::OamAccess => {
+                if self.oam_check_enabled { irq.insert(Interrupt::LCD_STAT); }
+                OAM_ACCESS_CYCLES
+            },
             Mode::VramAccess => VRAM_ACCESS_CYCLES,
         };
         self.cycles_left += mode_cycles;
@@ -190,7 +204,7 @@ impl Gpu {
         let pixel_y = if is_window {
             self.ly - self.window_y
         } else {
-            self.scroll_y + self.ly
+            self.scroll_y.wrapping_add(self.ly)
         };
         let tile_y = (pixel_y / 8) as u16;
         let tile_line_y = (pixel_y % 8) as usize;
@@ -304,7 +318,7 @@ impl Gpu {
     pub fn set_stat(&mut self, value: u8) {
         self.hblank_check_enabled = (value & (1 << 3)) != 0;
         self.vblank_check_enabled = (value & (1 << 4)) != 0;
-        self.oam_check_enabled = (value & (1 << 5)) != 0;
+        self.oam_check_enabled    = (value & (1 << 5)) != 0;
         self.ly_check_enabled     = (value & (1 << 6)) != 0;
     }
     #[inline(always)]

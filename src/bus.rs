@@ -2,6 +2,7 @@ use std::io::Read;
 use std::path::Path;
 
 use cartridge::Cartridge;
+use cpu::Interrupt;
 use gpu::{BgMap,Gpu};
 use joypad::{Joypad,Button};
 use serial::Serial;
@@ -23,7 +24,7 @@ pub struct Bus {
     timer: Timer,
     internal_ram: [u8; INTERNAL_RAM_SIZE],
     zero_page: [u8; ZERO_PAGE_SIZE],
-    interrupts_flag: u8,
+    interrupts_flag: Interrupt,
     interrupts_enable: u8
 }
 
@@ -42,7 +43,7 @@ impl Bus {
             timer: Timer::new(),
             internal_ram: [0; INTERNAL_RAM_SIZE],
             zero_page: [0; ZERO_PAGE_SIZE],
-            interrupts_flag: 0,
+            interrupts_flag: Interrupt::empty(),
             interrupts_enable: 0,
         })
     }
@@ -64,11 +65,12 @@ impl Bus {
             0xff05            => self.timer.get_counter(),
             0xff06            => self.timer.get_modulo(),
             0xff07            => self.timer.get_control(),
-            0xff0f            => self.interrupts_flag,
+            0xff0f            => self.interrupts_flag.bits(),
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
             0xff20 ... 0xff26 |
-            0xff30 ... 0xff3f => { println!("Read IO reg (sound): {:04x}", addr); 0},
+            0xff30 ... 0xff3f => { // println!("Read IO reg (sound): {:04x}", addr);
+                                   0},
             0xff40            => self.gpu.get_control(),
             0xff41            => self.gpu.get_stat(),
             0xff42            => self.gpu.get_scroll_y(),
@@ -81,7 +83,8 @@ impl Bus {
             0xff49            => self.gpu.get_obj1_palette(),
             0xff4a            => self.gpu.get_window_y(),
             0xff4b            => self.gpu.get_window_x(),
-            0xff00 ... 0xff7f => { println!("Read IO reg: {:04x}", addr); 0},
+            0xff00 ... 0xff7f => { //println!("Read IO reg: {:04x}", addr);
+                                   0xff},
             0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80],
             0xffff            => self.interrupts_enable,
             _ => unimplemented!("Unknown address: {:04x}", addr)
@@ -101,6 +104,7 @@ impl Bus {
             0xff00            => self.joypad.write(val),
             0xff01            => self.serial.set_transfer(val),
             0xff02            => self.serial.set_control(val),
+            0xff0f            => self.interrupts_flag = Interrupt::from_bits_truncate(val),
             0xff04            => self.timer.reset_divider(),
             0xff05            => self.timer.set_counter(val),
             0xff06            => self.timer.set_modulo(val),
@@ -108,7 +112,7 @@ impl Bus {
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
             0xff20 ... 0xff26 |
-            0xff30 ... 0xff3f => println!("Write IO reg (sound): {:04x} = {}", addr, val),
+            0xff30 ... 0xff3f => {},//println!("Write IO reg (sound): {:04x} = {}", addr, val),
             0xff40            => self.gpu.set_control(val),
             0xff41            => self.gpu.set_stat(val),
             0xff42            => self.gpu.set_scroll_y(val),
@@ -122,7 +126,7 @@ impl Bus {
             0xff4a            => self.gpu.set_window_y(val),
             0xff4b            => self.gpu.set_window_x(val),
             0xff50            => self.bootrom_active = false,
-            0xff00 ... 0xff7f => println!("Write IO reg: {:04x} = {}", addr, val),
+            0xff00 ... 0xff7f => {}, //println!("Write IO reg: {:04x} = {}", addr, val),
             0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80] = val,
             0xffff            => self.interrupts_enable = val,
             _ => unimplemented!("Unknown address: {:04x}", addr)
@@ -147,11 +151,21 @@ impl Bus {
         self.joypad.key_up(button);
     }
     pub fn update(&mut self, cycles: u32) -> bool {
-        self.timer.update(cycles);
-        let redraw = self.gpu.update(cycles);
+        self.timer.update(cycles, &mut self.interrupts_flag);
+        let redraw = self.gpu.update(cycles, &mut self.interrupts_flag);
         redraw
     }
     pub fn get_screen_buffer(&self) -> &[u8] {
         self.gpu.get_screen_buffer()
+    }
+    pub fn check_interrupts(&mut self) -> Option<Interrupt> {
+        let valid_interrupts = self.interrupts_flag & Interrupt::from_bits_truncate(self.interrupts_enable);
+        self.interrupts_flag = Interrupt::empty();
+        if valid_interrupts.contains(Interrupt::VBLANK)   { return Some(Interrupt::VBLANK); }
+        if valid_interrupts.contains(Interrupt::LCD_STAT) { return Some(Interrupt::LCD_STAT); }
+        if valid_interrupts.contains(Interrupt::TIMER)    { return Some(Interrupt::TIMER); }
+        if valid_interrupts.contains(Interrupt::SERIAL)   { return Some(Interrupt::SERIAL); }
+        if valid_interrupts.contains(Interrupt::JOYPAD)   { return Some(Interrupt::JOYPAD); }
+        None
     }
 }

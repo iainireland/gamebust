@@ -1,3 +1,5 @@
+use cpu::Interrupt;
+
 pub struct Timer {
     divider: u16,
     counter: u8,
@@ -18,7 +20,7 @@ impl Timer {
             cycles: 0,
         }
     }
-    pub fn update(&mut self, cycles: u32) {
+    pub fn update(&mut self, cycles: u32, irq: &mut Interrupt) {
         self.divider = self.divider.wrapping_add(cycles as u16);
 
         if self.tac_enabled {
@@ -32,6 +34,7 @@ impl Timer {
                 self.counter = c;
                 if carry {
                     self.counter = self.modulo;
+                    irq.insert(Interrupt::TIMER);
                 }
             }
         }
