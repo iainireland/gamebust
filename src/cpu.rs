@@ -16,8 +16,8 @@ bitflags! {
 }
 
 pub struct Cpu {
-    reg: Registers,
-    bus: Bus,
+    pub reg: Registers,
+    pub bus: Bus,
     interrupts_enabled: bool,
     interrupts_buffer: Option<bool>,
     halted: bool,
@@ -672,8 +672,5 @@ impl Cpu {
         let result = self.redraw;
         self.redraw = false;
         result
-    }
-    pub fn get_pc(&self) -> u16 {
-        self.reg.pc
     }
 }
