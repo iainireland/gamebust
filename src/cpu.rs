@@ -621,7 +621,7 @@ impl Cpu {
     #[inline(always)]
     fn add16(&mut self, a: u16, b: u16) -> u16 {
         let (result,carry) = a.overflowing_add(b);
-        let half_carry = ((a & 0xff) + (b & 0xff)) & 0x100 != 0;
+        let half_carry = ((a & 0x7ff) + (b & 0x7ff)) & 0x800 != 0;
         self.reg.set_flags_nhc(false, half_carry, carry);
         result
     }
