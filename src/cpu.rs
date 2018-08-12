@@ -102,8 +102,8 @@ impl Cpu {
             (0,3,7) => Instr::RotateARightCarry,
             (0,4,7) => Instr::DecimalAdjust,
             (0,5,7) => Instr::Complement,
-            (0,6,7) => Instr::ComplementCarry,
-            (0,7,7) => Instr::SetCarry,
+            (0,6,7) => Instr::SetCarry,
+            (0,7,7) => Instr::ComplementCarry,
             (1,6,6) => Instr::Halt,
             (1,_,_) => Instr::RegCopy(Reg8::from(y), Reg8::from(z)),
             (2,0,_) => Instr::Add(Reg8::from(z)),
@@ -143,9 +143,9 @@ impl Cpu {
                             2 => Instr::RotateLeftCarry(reg),
                             3 => Instr::RotateRightCarry(reg),
                             4 => Instr::ShiftLeft(reg),
-                            5 => Instr::ShiftRightLogical(reg),
+                            5 => Instr::ShiftRightArith(reg),
                             6 => Instr::SwapBytes(reg),
-                            7 => Instr::ShiftRightArith(reg),
+                            7 => Instr::ShiftRightLogical(reg),
                             _ => unreachable!("Invalid rotation"),
                         }
                     },
@@ -212,7 +212,9 @@ impl Cpu {
             Instr::AddHL(reg) => {
                 let hl = self.get_reg16(Reg16::HL);
                 let rr = self.get_reg16(reg);
-                let result = self.add16(hl, rr);
+                let (result,carry) = hl.overflowing_add(rr);
+                let half_carry = ((hl & 0x7ff) + (rr & 0x7ff)) & 0x800 != 0;
+                self.reg.set_flags_nhc(false, half_carry, carry);
                 self.set_reg16(Reg16::HL, result);
                 8
             },
@@ -288,7 +290,7 @@ impl Cpu {
                 } else {
                     let corr_lo = if self.reg.f_h || a & 0xf > 9 { 0x6 } else { 0x0 };
                     self.reg.f_c = self.reg.f_c || a > 0x99;
-                    let corr_hi = if self.reg.f_c { 0x6 } else { 0x0 };
+                    let corr_hi = if self.reg.f_c { 0x60 } else { 0x0 };
                     a.wrapping_add(corr_hi | corr_lo)
                 };
                 self.reg.f_z = result == 0;
@@ -299,6 +301,8 @@ impl Cpu {
             Instr::Complement => {
                 let complemented = !self.reg.r8(Reg8::A);
                 self.reg.w8(Reg8::A, complemented);
+                self.reg.f_n = true;
+                self.reg.f_h = true;
                 4
             },
             Instr::ComplementCarry => {
@@ -322,18 +326,18 @@ impl Cpu {
             Instr::Add(reg) | Instr::AddCarry(reg) => {
                 let a = self.reg.r8(Reg8::A);
                 let operand = self.get_reg8(reg);
-                let is_carry = match instr { Instr::AddCarry(_) => true, _ => false };
-                let result = self.add8(a, operand, is_carry);
+                let carry_in = match instr { Instr::AddCarry(_) => self.reg.f_c, _ => false };
+                let result = self.add8(a, operand, carry_in);
                 self.reg.w8(Reg8::A, result);
                 if reg == Reg8::HL { 8 } else { 4 }
             },
             Instr::AddImm(imm) | Instr::AddCarryImm(imm) => {
                 let a = self.reg.r8(Reg8::A);
-                let is_carry = match instr {
-                    Instr::AddCarryImm(_) => true,
+                let carry_in = match instr {
+                    Instr::AddCarryImm(_) => self.reg.f_c,
                     _ => false
                 };
-                let result = self.add8(a, imm, is_carry);
+                let result = self.add8(a, imm, carry_in);
                 self.reg.w8(Reg8::A, result);
                 4
             },
@@ -342,7 +346,7 @@ impl Cpu {
                 let operand = self.get_reg8(reg);
                 let (is_carry, write_back) = match instr {
                     Instr::Sub(_) => (false, true),
-                    Instr::SubCarry(_) => (true, true),
+                    Instr::SubCarry(_) => (self.reg.f_c, true),
                     Instr::Comp(_) => (false, false),
                     _ => unreachable!()
                 };
@@ -356,7 +360,7 @@ impl Cpu {
                 let a = self.reg.r8(Reg8::A);
                 let (is_carry, write_back) = match instr {
                     Instr::SubImm(_) => (false, true),
-                    Instr::SubCarryImm(_) => (true, true),
+                    Instr::SubCarryImm(_) => (self.reg.f_c, true),
                     Instr::CompImm(_) => (false, false),
                     _ => unreachable!()
                 };
@@ -373,12 +377,12 @@ impl Cpu {
             },
             Instr::Or(reg) => {
                 let value = self.get_reg8(reg);
-                self.logical(value, |a,b| a | b, true);
+                self.logical(value, |a,b| a | b, false);
                 if reg == Reg8::HL { 8 } else { 4 }
             },
             Instr::Xor(reg) => {
                 let value = self.get_reg8(reg);
-                self.logical(value, |a,b| a ^ b, true);
+                self.logical(value, |a,b| a ^ b, false);
                 if reg == Reg8::HL { 8 } else { 4 }
             },
             Instr::AndImm(imm) => {
@@ -386,11 +390,11 @@ impl Cpu {
                 4
             },
             Instr::OrImm(imm) => {
-                self.logical(imm, |a,b| a | b, true);
+                self.logical(imm, |a,b| a | b, false);
                 4
             },
             Instr::XorImm(imm) => {
-                self.logical(imm, |a,b| a ^ b, true);
+                self.logical(imm, |a,b| a ^ b, false);
                 4
             },
             Instr::Ret(cond) => {
@@ -418,15 +422,13 @@ impl Cpu {
             },
             Instr::StackAdjust(disp) => {
                 let sp = self.reg.sp;
-                self.reg.sp = self.add16(sp, disp as u16);
-                self.reg.f_z = false;
+                self.reg.sp = self.disp16(sp, disp);
                 16
             },
             Instr::LoadLocalAddr(disp) => {
                 let sp = self.reg.sp;
-                let result = self.add16(sp, disp as u16);
+                let result = self.disp16(sp, disp);
                 self.reg.w16(Reg16::HL, result);
-                self.reg.f_z = false;
                 12
             },
             Instr::Pop(reg) => {
@@ -602,27 +604,32 @@ impl Cpu {
     }
     #[inline(always)]
     fn add8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
-        let b = if carry_in { b + 1 } else { b };
-        let (result, carry_out) = a.overflowing_add(b);
-        let half_carry = ((a & 0xf) + (b & 0xf)) & 0x10 != 0;
+        let c = carry_in as u8;
+        let result = a.wrapping_add(b).wrapping_add(c);
+        let carry_out = a as u16 + b as u16 + c as u16 > 0xff;
+        let half_carry = ((a & 0xf) + (b & 0xf) + c) > 0xf;
         self.reg.set_flags_nhc(false, half_carry, carry_out);
         self.reg.f_z = result == 0;
         result
     }
     #[inline(always)]
     fn sub8(&mut self, a: u8, b: u8, carry_in: bool) -> u8 {
-        let b = if carry_in { b + 1 } else { b };
-        let (result, carry_out) = a.overflowing_sub(b);
-        let half_carry = a & 0xf < b & 0xf;
+        let c = carry_in as u8;
+        let result = a.wrapping_sub(b).wrapping_sub(c);
+        let carry_out = (a as u16) < (b as u16) + (c as u16);
+        let half_carry = a & 0xf < (b & 0xf) + c;
         self.reg.set_flags_nhc(true, half_carry, carry_out);
         self.reg.f_z = result == 0;
         result
     }
     #[inline(always)]
-    fn add16(&mut self, a: u16, b: u16) -> u16 {
-        let (result,carry) = a.overflowing_add(b);
-        let half_carry = ((a & 0x7ff) + (b & 0x7ff)) & 0x800 != 0;
+    fn disp16(&mut self, a: u16, disp: i8) -> u16 {
+        let b = disp as u16;
+        let result = a.wrapping_add(b);
+        let half_carry = ((a & 0xf) + (b & 0xf)) & 0x10 != 0;
+        let carry = ((a & 0xff) + (b & 0xff)) & 0x100 != 0;
         self.reg.set_flags_nhc(false, half_carry, carry);
+        self.reg.f_z = false;
         result
     }
     #[inline(always)]
@@ -630,7 +637,7 @@ impl Cpu {
     where F: FnOnce(u8, bool) -> (u8, bool) {
         let value = self.get_reg8(reg);
         let (result, carry) = f(value, self.reg.f_c);
-        self.reg.f_z = result != 0;
+        self.reg.f_z = result == 0;
         self.reg.set_flags_nhc(false, false, carry);
         self.set_reg8(reg, result);
     }
