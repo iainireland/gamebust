@@ -49,6 +49,7 @@ impl Debugger {
                 Ok(l) => l,
                 Err(_) => continue
             };
+            self.readline.add_history_entry(&line);
             let mut words = line.split_whitespace();
             if let Some(command) = words.next() {
                 let args: Vec<&str> = words.collect();
