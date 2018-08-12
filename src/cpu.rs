@@ -259,7 +259,7 @@ impl Cpu {
                 4
             },
             Instr::RotateALeftCarry => {
-                self.rotate(Reg8::A, |a,c| (a << 1 | if c { 1 } else { 0 }, a & 0x80 == 0));
+                self.rotate(Reg8::A, |a,c| (a << 1 | if c { 1 } else { 0 }, a & 0x80 != 0));
                 self.reg.f_z = false;
                 4
             },
@@ -269,7 +269,7 @@ impl Cpu {
                 4
             },
             Instr::RotateARightCarry => {
-                self.rotate(Reg8::A, |a,c| (a >> 1 | if c { 0x80 } else { 0 }, a & 0x1 == 0));
+                self.rotate(Reg8::A, |a,c| (a >> 1 | if c { 0x80 } else { 0 }, a & 0x1 != 0));
                 self.reg.f_z = false;
                 4
             },
