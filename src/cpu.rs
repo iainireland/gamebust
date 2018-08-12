@@ -60,7 +60,9 @@ impl Cpu {
                 20
             },
             _ => {
-                let instr = self.fetch();
+                let mut pc = self.reg.pc;
+                let instr = self.fetch(&mut pc);
+                self.reg.pc = pc;
                 let cycles = self.exec(instr);
                 cycles
             }
@@ -71,8 +73,9 @@ impl Cpu {
         }
         cycles
     }
-    pub fn fetch(&mut self) -> Instr {
-        let opcode = self.imm8();
+    #[inline(always)]
+    pub fn fetch(&self, cursor: &mut u16) -> Instr {
+        let opcode = self.imm8(cursor);
 
         let x = opcode >> 6;
         let y = (opcode >> 3) & 7;
@@ -80,11 +83,11 @@ impl Cpu {
 
         match (x,y,z) {
             (0,0,0) => Instr::Nop,
-            (0,1,0) => Instr::StoreSP(self.imm16()),
+            (0,1,0) => Instr::StoreSP(self.imm16(cursor)),
             (0,2,0) => Instr::Stop,
-            (0,3,0) => Instr::JumpRelative(self.imm8() as i8, Cond::Always),
-            (0,4...7,0) => Instr::JumpRelative(self.imm8() as i8, Cond::from(y-4)),
-            (0,_,1) if y % 2 == 0  => Instr::LoadImm16(Reg16::from(y, true), self.imm16()),
+            (0,3,0) => Instr::JumpRelative(self.imm8(cursor) as i8, Cond::Always),
+            (0,4...7,0) => Instr::JumpRelative(self.imm8(cursor) as i8, Cond::from(y-4)),
+            (0,_,1) if y % 2 == 0  => Instr::LoadImm16(Reg16::from(y, true), self.imm16(cursor)),
             (0,_,1) => Instr::AddHL(Reg16::from(y, true)),
             (0,_,2) if y % 2 == 0 => Instr::StoreA(Indirect::from(y)),
             (0,_,2) => Instr::LoadA(Indirect::from(y)),
@@ -92,7 +95,7 @@ impl Cpu {
             (0,_,3) => Instr::Dec16(Reg16::from(y, true)),
             (0,_,4) => Instr::Inc8(Reg8::from(y)),
             (0,_,5) => Instr::Dec8(Reg8::from(y)),
-            (0,_,6) => Instr::LoadImm8(Reg8::from(y), self.imm8()),
+            (0,_,6) => Instr::LoadImm8(Reg8::from(y), self.imm8(cursor)),
             (0,0,7) => Instr::RotateALeft,
             (0,1,7) => Instr::RotateARight,
             (0,2,7) => Instr::RotateALeftCarry,
@@ -112,23 +115,23 @@ impl Cpu {
             (2,6,_) => Instr::Or(Reg8::from(z)),
             (2,7,_) => Instr::Comp(Reg8::from(z)),
             (3,0...3,0) => Instr::Ret(Cond::from(y)),
-            (3,4,0) => Instr::StoreIO(self.imm8()),
-            (3,5,0) => Instr::StackAdjust(self.imm8() as i8),
-            (3,6,0) => Instr::LoadIO(self.imm8()),
-            (3,7,0) => Instr::LoadLocalAddr(self.imm8() as i8),
+            (3,4,0) => Instr::StoreIO(self.imm8(cursor)),
+            (3,5,0) => Instr::StackAdjust(self.imm8(cursor) as i8),
+            (3,6,0) => Instr::LoadIO(self.imm8(cursor)),
+            (3,7,0) => Instr::LoadLocalAddr(self.imm8(cursor) as i8),
             (3,_,1) if y % 2 == 0 => Instr::Pop(Reg16::from(y, false)),
             (3,1,1) => Instr::Ret(Cond::Always),
             (3,3,1) => Instr::RetI,
             (3,5,1) => Instr::JumpHL,
             (3,7,1) => Instr::LoadStackHL,
-            (3,0...3,2) => Instr::Jump(self.imm16(), Cond::from(y)),
+            (3,0...3,2) => Instr::Jump(self.imm16(cursor), Cond::from(y)),
             (3,4,2) => Instr::StoreIOC,
-            (3,5,2) => Instr::StoreGlobal(self.imm16()),
+            (3,5,2) => Instr::StoreGlobal(self.imm16(cursor)),
             (3,6,2) => Instr::LoadIOC,
-            (3,7,2) => Instr::LoadGlobal(self.imm16()),
-            (3,0,3) => Instr::Jump(self.imm16(), Cond::Always),
+            (3,7,2) => Instr::LoadGlobal(self.imm16(cursor)),
+            (3,0,3) => Instr::Jump(self.imm16(cursor), Cond::Always),
             (3,1,3) => {
-                let extended_opcode = self.imm8();
+                let extended_opcode = self.imm8(cursor);
                 let operation = extended_opcode >> 6;
                 let y = (extended_opcode >> 3) & 7;
                 let reg = Reg8::from(extended_opcode & 7);
@@ -154,29 +157,31 @@ impl Cpu {
             },
             (3,6,3) => Instr::DisableInterrupts,
             (3,7,3) => Instr::EnableInterrupts,
-            (3,0...3,4) => Instr::Call(self.imm16(), Cond::from(y)),
+            (3,0...3,4) => Instr::Call(self.imm16(cursor), Cond::from(y)),
             (3,_,5) if y % 2 == 0 => Instr::Push(Reg16::from(y, false)),
-            (3,1,5) => Instr::Call(self.imm16(), Cond::Always),
-            (3,0,6) => Instr::AddImm(self.imm8()),
-            (3,1,6) => Instr::AddCarryImm(self.imm8()),
-            (3,2,6) => Instr::SubImm(self.imm8()),
-            (3,3,6) => Instr::SubCarryImm(self.imm8()),
-            (3,4,6) => Instr::AndImm(self.imm8()),
-            (3,5,6) => Instr::XorImm(self.imm8()),
-            (3,6,6) => Instr::OrImm(self.imm8()),
-            (3,7,6) => Instr::CompImm(self.imm8()),
+            (3,1,5) => Instr::Call(self.imm16(cursor), Cond::Always),
+            (3,0,6) => Instr::AddImm(self.imm8(cursor)),
+            (3,1,6) => Instr::AddCarryImm(self.imm8(cursor)),
+            (3,2,6) => Instr::SubImm(self.imm8(cursor)),
+            (3,3,6) => Instr::SubCarryImm(self.imm8(cursor)),
+            (3,4,6) => Instr::AndImm(self.imm8(cursor)),
+            (3,5,6) => Instr::XorImm(self.imm8(cursor)),
+            (3,6,6) => Instr::OrImm(self.imm8(cursor)),
+            (3,7,6) => Instr::CompImm(self.imm8(cursor)),
             (3,_,7) => Instr::Restart(y),
-            _ => unimplemented!("Unimplemented opcode: {:X} \nregs: {:?}", opcode, self.reg)
+            _ => Instr::Bad(opcode),
         }
     }
-    fn imm8(&mut self) -> u8 {
-        let value = self.bus.r8(self.reg.pc);
-        self.reg.pc += 1;
+    #[inline(always)]
+    fn imm8(&self, cursor: &mut u16) -> u8 {
+        let value = self.bus.r8(*cursor);
+        *cursor += 1;
         value
     }
-    fn imm16(&mut self) -> u16 {
-        let value = self.bus.r16(self.reg.pc);
-        self.reg.pc += 2;
+    #[inline(always)]
+    fn imm16(&self, cursor: &mut u16) -> u16 {
+        let value = self.bus.r16(*cursor);
+        *cursor += 2;
         value
     }
 
@@ -542,6 +547,7 @@ impl Cpu {
                 self.rotate(reg, |a,_c| (a.rotate_left(4), false));
                 if reg == Reg8::HL { 16 } else { 8 }
             }
+            Instr::Bad(opcode) => unimplemented!("Unimplemented opcode: {:X} \nregs: {:?}", opcode, self.reg)
         }
     }
     #[inline(always)]

@@ -1,5 +1,6 @@
 use rustyline::Editor;
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use cpu::Cpu;
 
@@ -16,7 +17,8 @@ pub struct Debugger {
     readline: Editor<()>,
     breakpoints: HashSet<u16>,
     paused: bool,
-    execute: bool
+    execute: bool,
+    steps_remaining: u32
 }
 
 impl Debugger {
@@ -26,17 +28,22 @@ impl Debugger {
             readline: Editor::new(),
             breakpoints: HashSet::new(),
             paused: false,
-            execute: false
+            execute: false,
+            steps_remaining: 0
         };
         result.register_command("continue", cmd_continue);
         result.register_command("registers", cmd_registers);
         result.register_command("breakpoint", cmd_breakpoint);
+        result.register_command("bclear", cmd_clear);
+        result.register_command("list", cmd_list);
+        result.register_command("step", cmd_step);
         result
     }
     pub fn debug(&mut self, cpu: &mut Cpu) {
+        print_instr(cpu, cpu.reg.pc);
+
         self.paused = false;
         self.execute = false;
-        println!("Stopped at {:#04x}", cpu.reg.pc);
         while !self.execute {
             let line = match self.readline.readline("> ") {
                 Ok(l) => l,
@@ -61,8 +68,13 @@ impl Debugger {
         self.paused
     }
     pub fn check_breakpoints(&mut self, cpu: &Cpu) {
+        if self.steps_remaining > 0 {
+            self.steps_remaining -= 1;
+            if self.steps_remaining == 0 { self.paused = true; }
+        }
         if self.breakpoints.contains(&cpu.reg.pc) {
             self.paused = true;
+            self.steps_remaining = 0;
         }
     }
     fn register_command(&mut self, name: &'static str, func: CommandFn) {
@@ -87,6 +99,11 @@ impl Debugger {
         Err(())
     }
 }
+fn print_instr(cpu: &Cpu, mut addr: u16) -> u16 {
+    print!("{:04x}: ", addr);
+    println!("{}", cpu.fetch(&mut addr));
+    addr
+}
 
 fn cmd_continue(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
     dbg.execute = true;
@@ -102,4 +119,34 @@ fn cmd_breakpoint(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
     if let Ok(addr) = u16::from_str_radix(args[0], 16) {
         dbg.breakpoints.insert(addr);
     }
+}
+fn cmd_clear(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
+    dbg.breakpoints.clear();
+}
+fn cmd_list(cpu: &mut Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
+    let mut addr = match args.len() {
+        0 => cpu.reg.pc,
+        1 => if let Ok(addr) = u16::from_str_radix(args[0], 16) {
+            addr
+        } else {
+            println!("Usage: list <addr>"); return;
+        },
+        _ => { println!("Too many arguments to list"); return; },
+    };
+    for _ in 0..10 {
+        addr = print_instr(cpu, addr);
+    }
+}
+fn cmd_step(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
+    let steps = match args.len() {
+        0 => 1,
+        1 => if let Ok(addr) = u32::from_str(args[0]) {
+            addr
+        } else {
+            println!("Usage: step [<n>]"); return;
+        },
+        _ => { println!("Too many arguments to step"); return; },
+    };
+    dbg.steps_remaining = steps;
+    dbg.execute = true;
 }

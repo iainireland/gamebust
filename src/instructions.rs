@@ -30,6 +30,7 @@ impl fmt::Display for Cond {
 
 #[derive(Copy,Clone,Debug,Eq,PartialEq)]
 pub enum Instr {
+    Bad(u8),
     Nop,
     Stop,
     StoreSP(u16),
@@ -104,6 +105,7 @@ pub enum Instr {
 impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Instr::Bad(opcode) => write!(f, "<{:02x}>", opcode),
             Instr::Nop => write!(f, "NOP"),
             Instr::Stop => write!(f, "STOP"),
             Instr::StoreSP(addr) => write!(f, "LOAD ({:#04x}),SP", addr),
