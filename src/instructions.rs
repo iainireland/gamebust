@@ -108,7 +108,7 @@ impl fmt::Display for Instr {
             Instr::Bad(opcode) => write!(f, "<{:02x}>", opcode),
             Instr::Nop => write!(f, "NOP"),
             Instr::Stop => write!(f, "STOP"),
-            Instr::StoreSP(addr) => write!(f, "LOAD ({:#04x}),SP", addr),
+            Instr::StoreSP(addr) => write!(f, "LD ({:#04x}),SP", addr),
             Instr::JumpRelative(offset, Cond::Always) => write!(f, "JR {}", offset),
             Instr::JumpRelative(offset, cond) => write!(f, "JR{},{}", cond, offset),
             Instr::LoadImm16(reg, imm) => write!(f, "LD {},{:#04x}", reg, imm),
