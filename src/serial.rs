@@ -30,7 +30,6 @@ impl Serial {
     }
     pub fn set_control(&mut self, value: u8) {
         if value & 0x80 != 0 {
-            //unimplemented!("Starting serial transfer");
             print!("{}", self.data as char);
         }
         self.clock = if value & 0x01 == 0 { Clock::External } else { Clock::Internal };

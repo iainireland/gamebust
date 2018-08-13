@@ -158,14 +158,24 @@ impl Bus {
     pub fn get_screen_buffer(&self) -> &[u8] {
         self.gpu.get_screen_buffer()
     }
-    pub fn check_interrupts(&mut self) -> Option<Interrupt> {
-        let valid_interrupts = self.interrupts_flag & Interrupt::from_bits_truncate(self.interrupts_enable);
-        self.interrupts_flag = Interrupt::empty();
-        if valid_interrupts.contains(Interrupt::VBLANK)   { return Some(Interrupt::VBLANK); }
-        if valid_interrupts.contains(Interrupt::LCD_STAT) { return Some(Interrupt::LCD_STAT); }
-        if valid_interrupts.contains(Interrupt::TIMER)    { return Some(Interrupt::TIMER); }
-        if valid_interrupts.contains(Interrupt::SERIAL)   { return Some(Interrupt::SERIAL); }
-        if valid_interrupts.contains(Interrupt::JOYPAD)   { return Some(Interrupt::JOYPAD); }
-        None
+    pub fn get_highest_priority_interrupt(&self) -> Option<Interrupt> {
+        let enabled = Interrupt::from_bits_truncate(self.interrupts_enable);
+        let valid_interrupts = (self.interrupts_flag & enabled).bits();
+
+        // Isolate rightmost bit of x: x & ((!x)+1)
+        let rightmost_bit = valid_interrupts & (!valid_interrupts).wrapping_add(1);
+        let priority_interrupt = Interrupt::from_bits_truncate(rightmost_bit);
+
+        if !priority_interrupt.is_empty() {
+            Some(priority_interrupt)
+        } else {
+            None
+        }
+    }
+    pub fn clear_interrupt(&mut self, interrupt: Interrupt) {
+        self.interrupts_flag.remove(interrupt);
+    }
+}
+
     }
 }

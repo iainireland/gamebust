@@ -18,7 +18,7 @@ bitflags! {
 pub struct Cpu {
     pub reg: Registers,
     pub bus: Bus,
-    interrupts_enabled: bool,
+    master_interrupt_flag: bool,
     interrupts_buffer: Option<bool>,
     halted: bool,
     stopped: bool,
@@ -30,7 +30,7 @@ impl Cpu {
         Cpu {
             reg: Registers::new(),
             bus: Bus::new(cartridge_path).expect("File not found"),
-            interrupts_enabled: false,
+            master_interrupt_flag: false,
             interrupts_buffer: None,
             halted: false,
             stopped: false,
@@ -42,33 +42,39 @@ impl Cpu {
             return 0;
         }
 
-        if self.halted {
-            unimplemented!("Halted");
-        }
-        let cycles = match self.bus.check_interrupts() {
-            Some(ref interrupt) if self.interrupts_enabled => {
-                self.interrupts_enabled = false;
-                let dest = match *interrupt {
-                    Interrupt::VBLANK   => 0x40,
-                    Interrupt::LCD_STAT => 0x48,
-                    Interrupt::TIMER    => 0x50,
-                    Interrupt::SERIAL   => 0x58,
-                    Interrupt::JOYPAD   => 0x60,
-                    _ => unreachable!("Only one bit can be set.")
-                };
-                self.call(dest);
-                20
-            },
-            _ => {
-                let mut pc = self.reg.pc;
-                let instr = self.fetch(&mut pc);
-                self.reg.pc = pc;
-                let cycles = self.exec(instr);
-                cycles
+        let interrupt = {
+            let i = self.bus.get_highest_priority_interrupt();
+            if i.is_some() {
+                self.halted = false;
             }
+            if self.master_interrupt_flag { i } else { None }
         };
+
+        let cycles = if let Some(interrupt) = interrupt {
+            self.bus.clear_interrupt(interrupt);
+            self.master_interrupt_flag = false;
+            let dest = match interrupt {
+                Interrupt::VBLANK   => 0x40,
+                Interrupt::LCD_STAT => 0x48,
+                Interrupt::TIMER    => 0x50,
+                Interrupt::SERIAL   => 0x58,
+                Interrupt::JOYPAD   => 0x60,
+                _ => unreachable!("Only one bit can be set.")
+            };
+            self.call(dest);
+            20
+        } else if !self.halted{
+            let mut pc = self.reg.pc;
+            let instr = self.fetch(&mut pc);
+            self.reg.pc = pc;
+            let cycles = self.exec(instr);
+            cycles
+        } else {
+            4 // halted
+        };
+
         if let Some(interrupt) = self.interrupts_buffer {
-            self.interrupts_enabled = interrupt;
+            self.master_interrupt_flag = interrupt;
             self.interrupts_buffer = None;
         }
         cycles
@@ -407,7 +413,7 @@ impl Cpu {
             },
             Instr::RetI => {
                 self.ret();
-                self.interrupts_enabled = true;
+                self.master_interrupt_flag = true;
                 16
             },
             Instr::StoreIO(offset) => {
