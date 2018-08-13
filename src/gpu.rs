@@ -131,7 +131,6 @@ impl Gpu {
         const VBLANK_SCANLINES: u8 = 12;
 
         let mut vblank = false;
-        if !self.lcd_enabled { return false; }
         self.cycles_left -= cycles as i32;
 
         if self.cycles_left > 0 {
@@ -218,9 +217,8 @@ impl Gpu {
             let tile_index = if self.bg_and_sprite_tiles_overlap {
                 tile_val as usize
             } else {
-                (256 + (tile_val as i16)) as usize
+                (32 + (tile_val as i16)) as usize
             };
-
             let tile_line = self.tile_lines[tile_index * 8 + tile_line_y];
             let palette_index =
                 ((tile_line >> tile_bit_shift) & 1) * 2 +
@@ -230,7 +228,7 @@ impl Gpu {
         }
     }
     fn render_sprites(&mut self) {
-        unimplemented!("Sprites");
+        //unimplemented!("Sprites");
     }
     #[inline(always)]
     fn draw_pixel(&mut self, x: usize, colour: u8) {
@@ -285,10 +283,10 @@ impl Gpu {
         if self.bg_enabled                           { result |= 1 << 0; }
         if self.sprites_enabled                      { result |= 1 << 1; }
         if self.large_sprites_enabled                { result |= 1 << 2; }
-        if let BgMap::Map2 = self.active_bg_map     { result |= 1 << 3; }
+        if let BgMap::Map2 = self.active_bg_map      { result |= 1 << 3; }
         if self.bg_and_sprite_tiles_overlap          { result |= 1 << 4; }
         if self.window_enabled                       { result |= 1 << 5; }
-        if let BgMap::Map2 = self.active_window_map { result |= 1 << 6; }
+        if let BgMap::Map2 = self.active_window_map  { result |= 1 << 6; }
         if self.lcd_enabled                          { result |= 1 << 7; }
         result
     }
