@@ -10,7 +10,7 @@ use timer::Timer;
 
 const BOOT_ROM_SIZE: usize = 0x100;
 const INTERNAL_RAM_SIZE: usize = 0x2000;
-const ZERO_PAGE_SIZE: usize = 0x7f;
+const HIGH_RAM_SIZE: usize = 0x7f;
 
 
 
@@ -18,12 +18,13 @@ pub struct Bus {
     bootrom: [u8; BOOT_ROM_SIZE],
     bootrom_active: bool,
     cartridge: Cartridge,
+    dma: Dma,
     gpu: Gpu,
     joypad: Joypad,
     serial: Serial,
     timer: Timer,
     internal_ram: [u8; INTERNAL_RAM_SIZE],
-    zero_page: [u8; ZERO_PAGE_SIZE],
+    high_ram: [u8; HIGH_RAM_SIZE],
     interrupts_flag: Interrupt,
     interrupts_enable: u8
 }
@@ -37,12 +38,13 @@ impl Bus {
             bootrom_active: true,
             bootrom: *include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/boot.rom")),
             cartridge: Cartridge::new(buffer),
+            dma: Dma::new(),
             gpu: Gpu::new(),
             joypad: Joypad::new(),
             serial: Serial::new(),
             timer: Timer::new(),
             internal_ram: [0; INTERNAL_RAM_SIZE],
-            zero_page: [0; ZERO_PAGE_SIZE],
+            high_ram: [0; HIGH_RAM_SIZE],
             interrupts_flag: Interrupt::empty(),
             interrupts_enable: 0,
         })
@@ -69,7 +71,7 @@ impl Bus {
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
             0xff20 ... 0xff26 |
-            0xff30 ... 0xff3f => { // println!("Read IO reg (sound): {:04x}", addr);
+            0xff30 ... 0xff3f => { // unimplemented!("Read IO reg (sound): {:04x}", addr);
                                    0},
             0xff40            => self.gpu.get_control(),
             0xff41            => self.gpu.get_stat(),
@@ -77,15 +79,14 @@ impl Bus {
             0xff43            => self.gpu.get_scroll_x(),
             0xff44            => self.gpu.get_ly(),
             0xff45            => self.gpu.get_ly_compare(),
-            0xff46            => unimplemented!("DMA"),
+            0xff46            => self.dma.get_address(),
             0xff47            => self.gpu.get_bg_palette(),
             0xff48            => self.gpu.get_obj0_palette(),
             0xff49            => self.gpu.get_obj1_palette(),
             0xff4a            => self.gpu.get_window_y(),
             0xff4b            => self.gpu.get_window_x(),
-            0xff00 ... 0xff7f => { //println!("Read IO reg: {:04x}", addr);
-                                   0xff},
-            0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80],
+            0xff00 ... 0xff7f => 0xff,
+            0xff80 ... 0xfffe => self.high_ram[addr as usize - 0xff80],
             0xffff            => self.interrupts_enable,
             _ => unimplemented!("Unknown address: {:04x}", addr)
         }
@@ -112,22 +113,22 @@ impl Bus {
             0xff10 ... 0xff14 |
             0xff16 ... 0xff1e |
             0xff20 ... 0xff26 |
-            0xff30 ... 0xff3f => {},//println!("Write IO reg (sound): {:04x} = {}", addr, val),
+            0xff30 ... 0xff3f => {},//unimplemented!("Write IO reg (sound): {:04x} = {}", addr, val),
             0xff40            => self.gpu.set_control(val),
             0xff41            => self.gpu.set_stat(val),
             0xff42            => self.gpu.set_scroll_y(val),
             0xff43            => self.gpu.set_scroll_x(val),
             0xff44            => self.gpu.reset_ly(),
             0xff45            => self.gpu.set_ly_compare(val),
-            0xff46            => unimplemented!("DMA"),
+            0xff46            => self.dma.set_address(val),
             0xff47            => self.gpu.set_bg_palette(val),
             0xff48            => self.gpu.set_obj0_palette(val),
             0xff49            => self.gpu.set_obj1_palette(val),
             0xff4a            => self.gpu.set_window_y(val),
             0xff4b            => self.gpu.set_window_x(val),
             0xff50            => self.bootrom_active = false,
-            0xff00 ... 0xff7f => {}, //println!("Write IO reg: {:04x} = {}", addr, val),
-            0xff80 ... 0xfffe => self.zero_page[addr as usize - 0xff80] = val,
+            0xff00 ... 0xff7f => {},
+            0xff80 ... 0xfffe => self.high_ram[addr as usize - 0xff80] = val,
             0xffff            => self.interrupts_enable = val,
             _ => unimplemented!("Unknown address: {:04x}", addr)
         }
@@ -152,8 +153,25 @@ impl Bus {
     }
     pub fn update(&mut self, cycles: u32) -> bool {
         self.timer.update(cycles, &mut self.interrupts_flag);
+        self.update_dma(cycles);
         let redraw = self.gpu.update(cycles, &mut self.interrupts_flag);
         redraw
+    }
+    fn update_dma(&mut self, cycles: u32) {
+        for _ in 0..cycles / 4 {
+            if let Some(offset) = self.dma.progress {
+                let base = (self.dma.address as u16) << 8;
+                let data = self.r8(base);
+                self.gpu.write_sprite_ram(offset, data);
+                self.dma.progress = if offset < 0x9f {
+                    Some(offset + 1)
+                } else {
+                    None
+                }
+            } else {
+                return;
+            }
+        }
     }
     pub fn get_screen_buffer(&self) -> &[u8] {
         self.gpu.get_screen_buffer()
@@ -177,5 +195,25 @@ impl Bus {
     }
 }
 
+
+
+pub struct Dma {
+    address: u8,
+    progress: Option<u16>
+}
+
+impl Dma {
+    pub fn new() -> Self {
+        Dma {
+            address: 0,
+            progress: None
+        }
+    }
+    pub fn get_address(&self) -> u8 {
+        self.address
+    }
+    pub fn set_address(&mut self, value: u8) {
+        self.address = value;
+        self.progress = Some(0);
     }
 }
