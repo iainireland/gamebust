@@ -110,7 +110,7 @@ fn cmd_continue(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
     dbg.execute = true;
 }
 fn cmd_registers(cpu: &mut Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
-    println!(" A F   B C   D E   H L\n{}", cpu.reg);
+    println!(" A F   B C   D E   H L    PC SP\n{}", cpu.reg);
 }
 fn cmd_breakpoint(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
     if args.len() != 1 {

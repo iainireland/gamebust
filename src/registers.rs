@@ -187,7 +187,11 @@ impl Registers {
 }
 impl fmt::Display for Registers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:02x}|{:02x} {:02x}|{:02x} {:02x}|{:02x} {:02x}|{:02x}",
-               self.a, self.get_f(), self.b, self.c, self.d, self.e, self.h, self.l)
+        write!(f, "{:02x}|{:02x} {:02x}|{:02x} {:02x}|{:02x} {:02x}|{:02x} {:04x}|{:04x}",
+               self.a, self.get_f(),
+               self.b, self.c,
+               self.d, self.e,
+               self.h, self.l,
+               self.pc, self.sp)
     }
 }
