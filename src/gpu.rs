@@ -224,6 +224,7 @@ impl Gpu {
                 ((tile_line >> tile_bit_shift) & 1) * 2 +
                 ((tile_line >> (tile_bit_shift + 8)) & 1);
             let colour = self.bg_palette.get(palette_index as usize);
+
             self.draw_pixel(i as usize, colour);
         }
     }
@@ -243,7 +244,7 @@ impl Gpu {
     #[inline(always)]
     pub fn read_tile_ram(&self, addr: u16) -> u8 {
         let line = self.tile_lines[addr as usize / 2];
-        if addr & 0x1 == 0 {
+        if addr & 0x1 == 1 {
             (line & 0x0f) as u8
         } else {
             (line >> 8) as u8
@@ -253,7 +254,7 @@ impl Gpu {
     pub fn write_tile_ram(&mut self, addr: u16, val: u8) {
         let index = addr as usize / 2;
         let line = self.tile_lines[index];
-        self.tile_lines[index] = if addr & 0x1 == 0 {
+        self.tile_lines[index] = if addr & 0x1 == 1 {
             (line & 0xf0) | val as u16
         } else {
             (line & 0x0f) | ((val as u16) << 8)

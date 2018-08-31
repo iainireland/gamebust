@@ -57,8 +57,8 @@ impl Cpu {
                 Interrupt::VBLANK   => 0x40,
                 Interrupt::LCD_STAT => 0x48,
                 Interrupt::TIMER    => 0x50,
-                Interrupt::SERIAL   => 0x58,
-                Interrupt::JOYPAD   => 0x60,
+                Interrupt::SERIAL   => unimplemented!(), //0x58,
+                Interrupt::JOYPAD   => unimplemented!(), //0x60,
                 _ => unreachable!("Only one bit can be set.")
             };
             self.call(dest);
@@ -670,7 +670,9 @@ impl Cpu {
     }
 
     pub fn key_down(&mut self, button: Button) {
-        if self.stopped { // TODO: test input lines
+        if self.stopped {
+            self.stopped = false;
+            // TODO: check input line?
         }
         self.bus.key_down(button);
     }
