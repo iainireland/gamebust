@@ -11,7 +11,7 @@ const VBLANK_CYCLES: i32 = 456;
 const OAM_ACCESS_CYCLES: i32 = 84;
 const VRAM_ACCESS_CYCLES: i32 = 172;
 
-pub const STOPPED_SCREEN: [u8; SCREEN_BUFFER_SIZE] = //[255; SCREEN_BUFFER_SIZE];
+pub const STOPPED_SCREEN: [u8; SCREEN_BUFFER_SIZE] =
     *include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/stopscreen"));
 
 #[derive(Copy,Clone,Debug)]
@@ -198,6 +198,9 @@ impl Gpu {
     fn render_bg(&mut self) {
         let is_window = self.window_enabled && self.window_y <= self.ly;
         let map = if is_window { self.active_window_map } else { self.active_bg_map };
+        if is_window {
+            unimplemented!("Windows?");
+        }
 
         let pixel_y = if is_window {
             self.ly - self.window_y
@@ -228,16 +231,63 @@ impl Gpu {
         }
     }
     fn render_sprites(&mut self) {
-        //unimplemented!("Sprites");
+        let line_y = self.ly;
+        let sprite_height = if self.large_sprites_enabled { 16 } else { 8 };
+
+        let mut visible_sprites = Vec::new();
+        for i in 0..40 {
+            let sprite_y = self.get_sprite_y(i);
+            let sprite_x = self.get_sprite_x(i);
+            if sprite_y == 0 && sprite_x == 0 { continue; }
+            if sprite_y > line_y + 16 { continue; }
+            if sprite_y + sprite_height < line_y + 16 { continue; }
+            visible_sprites.push((sprite_x, i, sprite_y));
+        }
+        visible_sprites.sort();
+        let active_sprites = visible_sprites.iter().take(10).collect::<Vec<_>>();
+        for (sprite_x, i, sprite_y) in active_sprites.iter().rev() {
+            let tile_index = self.get_sprite_tile_index(*i);
+            let flags = self.get_sprite_flags(*i);
+            let low_priority = flags & 0x80 != 0;
+            let y_flip       = flags & 0x40 != 0;
+            let x_flip       = flags & 0x20 != 0;
+            let palette = self.obj_palette[(flags & 0x10) as usize >> 4];
+
+            if x_flip { }//unimplemented!("x flip"); }
+            if low_priority { }//unimplemented!("low priority"); }
+
+            let tile_offset = line_y + 16 - sprite_y;
+            let tile_line_index = if y_flip {
+                sprite_height - tile_offset - 1
+            } else {
+                tile_offset
+            };
+            let tile_val = self.tile_lines[(tile_index * 8 + tile_line_index) as usize];
+            for j in 0..8 {
+                if sprite_x + j < 7 { continue; }
+                let screen_x = (sprite_x + j - 8) as usize;
+                if screen_x >= SCREEN_WIDTH { continue; }
+
+                let tile_bit_shift = 7 - j;
+                let palette_index =
+                    ((tile_val >> tile_bit_shift) & 1) * 2 +
+                    ((tile_val >> (tile_bit_shift + 8)) & 1);
+                let colour = palette.get(palette_index as usize);
+
+                self.draw_pixel(screen_x, colour);
+            }
+
+        }
     }
+
     #[inline(always)]
     fn draw_pixel(&mut self, x: usize, colour: u8) {
-            let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
-            let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
-            let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
-            screen_buffer_slice[x as usize * 3] = colour;
-            screen_buffer_slice[x as usize * 3 + 1] = colour;
-            screen_buffer_slice[x as usize * 3 + 2] = colour;
+        let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
+        let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
+        let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
+        screen_buffer_slice[x as usize * 3] = colour;
+        screen_buffer_slice[x as usize * 3 + 1] = colour;
+        screen_buffer_slice[x as usize * 3 + 2] = colour;
     }
 
     #[inline(always)]
@@ -277,6 +327,25 @@ impl Gpu {
     pub fn write_sprite_ram(&mut self, addr: u16, val: u8) {
         self.sprite_ram[addr as usize] = val;
     }
+
+    fn get_sprite_y(&self, index: usize) -> u8 {
+        self.sprite_ram[index * 4]
+    }
+    fn get_sprite_x(&self, index: usize) -> u8 {
+        self.sprite_ram[index * 4 + 1]
+    }
+    fn get_sprite_tile_index(&self, index: usize) -> u8 {
+        let result = self.sprite_ram[index * 4 + 2];
+        if self.large_sprites_enabled {
+            result & !0x01
+        } else {
+            result
+        }
+    }
+    fn get_sprite_flags(&self, index: usize) -> u8 {
+        self.sprite_ram[index * 4 + 3]
+    }
+
     #[inline(always)]
     pub fn get_control(&self) -> u8 {
         let mut result = 0;
