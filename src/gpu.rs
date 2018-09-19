@@ -19,6 +19,7 @@ pub enum BgMap {
     Map1, Map2
 }
 
+#[derive(Copy,Clone,Debug)]
 struct Palette {
     colours: [u8; 4]
 }
@@ -79,8 +80,7 @@ pub struct Gpu {
     ly: u8,
     ly_compare: u8,
     bg_palette: Palette,
-    obj0_palette: Palette,
-    obj1_palette: Palette,
+    obj_palette: [Palette; 2],
     window_x: u8,
     window_y: u8,
 
@@ -114,8 +114,7 @@ impl Gpu {
             ly: 0,
             ly_compare: 0,
             bg_palette: Palette::from_u8(228),
-            obj0_palette: Palette::from_u8(228),
-            obj1_palette: Palette::from_u8(228),
+            obj_palette: [Palette::from_u8(228); 2],
             window_x: 0,
             window_y: 0,
             ly_check_enabled: false,
@@ -361,20 +360,12 @@ impl Gpu {
         self.bg_palette = Palette::from_u8(value);
     }
     #[inline(always)]
-    pub fn get_obj0_palette(&self) -> u8 {
-        self.obj0_palette.to_u8()
+    pub fn get_obj_palette(&self, index: usize) -> u8 {
+        self.obj_palette[index].to_u8()
     }
     #[inline(always)]
-    pub fn set_obj0_palette(&mut self, value: u8) {
-        self.obj0_palette = Palette::from_u8(value);
-    }
-    #[inline(always)]
-    pub fn get_obj1_palette(&self) -> u8 {
-        self.obj1_palette.to_u8()
-    }
-    #[inline(always)]
-    pub fn set_obj1_palette(&mut self, value: u8) {
-        self.obj1_palette = Palette::from_u8(value);
+    pub fn set_obj_palette(&mut self, index: usize, value: u8) {
+        self.obj_palette[index] = Palette::from_u8(value);
     }
     #[inline(always)]
     pub fn get_window_x(&self) -> u8 {
