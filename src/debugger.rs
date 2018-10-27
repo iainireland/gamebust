@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use cpu::Cpu;
 
-type CommandFn = fn(&mut Cpu, &mut Debugger, &Vec<&str>);
+type CommandFn = fn(&Cpu, &mut Debugger, &Vec<&str>);
 
 #[derive(Clone,Copy)]
 struct Command {
@@ -12,13 +12,29 @@ struct Command {
     func: CommandFn
 }
 
+pub struct DebugState {
+    pub steps_remaining: u32,
+    pub breakpoints: HashSet<u16>,
+    pub watchpoints: HashSet<u16>,
+    pub paused: bool,
+}
+
+impl DebugState {
+    pub fn new() -> Self {
+        DebugState {
+            steps_remaining: 0,
+            breakpoints: HashSet::new(),
+            watchpoints: HashSet::new(),
+            paused: false,
+        }
+    }
+}
+
 pub struct Debugger {
     commands: Vec<Command>,
     readline: Editor<()>,
-    breakpoints: HashSet<u16>,
-    paused: bool,
     execute: bool,
-    steps_remaining: u32
+    state: DebugState,
 }
 
 impl Debugger {
@@ -26,23 +42,22 @@ impl Debugger {
         let mut result = Debugger {
             commands: Vec::new(),
             readline: Editor::new(),
-            breakpoints: HashSet::new(),
-            paused: false,
             execute: false,
-            steps_remaining: 0
+            state: DebugState::new()
         };
         result.register_command("continue", cmd_continue);
         result.register_command("registers", cmd_registers);
         result.register_command("breakpoint", cmd_breakpoint);
+        result.register_command("watchpoint", cmd_watchpoint);
         result.register_command("delete", cmd_delete);
         result.register_command("list", cmd_list);
         result.register_command("step", cmd_step);
         result
     }
-    pub fn debug(&mut self, cpu: &mut Cpu) {
+    pub fn debug(&mut self, cpu: &Cpu) {
         print_instr(cpu, cpu.reg.pc);
 
-        self.paused = false;
+        self.state.paused = false;
         self.execute = false;
         while !self.execute {
             let line = match self.readline.readline("> ") {
@@ -62,21 +77,14 @@ impl Debugger {
     }
     #[inline(always)]
     pub fn pause(&mut self) {
-        self.paused = true;
+        self.state.paused = true;
     }
     #[inline(always)]
     pub fn is_paused(&self) -> bool {
-        self.paused
+        self.state.paused
     }
-    pub fn check_breakpoints(&mut self, cpu: &Cpu) {
-        if self.steps_remaining > 0 {
-            self.steps_remaining -= 1;
-            if self.steps_remaining == 0 { self.paused = true; }
-        }
-        if self.breakpoints.contains(&cpu.reg.pc) {
-            self.paused = true;
-            self.steps_remaining = 0;
-        }
+    pub fn get_state(&mut self) -> &mut DebugState {
+        &mut self.state
     }
     fn register_command(&mut self, name: &'static str, func: CommandFn) {
         self.commands.push(Command { name: name, func: func });
@@ -106,25 +114,34 @@ fn print_instr(cpu: &Cpu, mut addr: u16) -> u16 {
     addr
 }
 
-fn cmd_continue(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
+fn cmd_continue(_cpu: &Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
     dbg.execute = true;
 }
-fn cmd_registers(cpu: &mut Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
+fn cmd_registers(cpu: &Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
     println!(" A F   B C   D E   H L    PC SP\n{}", cpu.reg);
 }
-fn cmd_breakpoint(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
+fn cmd_breakpoint(_cpu: &Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
     if args.len() != 1 {
         println!("Usage: breakpoint <addr>");
         return;
     }
     if let Ok(addr) = u16::from_str_radix(args[0], 16) {
-        dbg.breakpoints.insert(addr);
+        dbg.state.breakpoints.insert(addr);
     }
 }
-fn cmd_delete(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
-    dbg.breakpoints.clear();
+fn cmd_watchpoint(_cpu: &Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
+    if args.len() != 1 {
+        println!("Usage: watchpoint <addr>");
+        return;
+    }
+    if let Ok(addr) = u16::from_str_radix(args[0], 16) {
+        dbg.state.watchpoints.insert(addr);
+    }
 }
-fn cmd_list(cpu: &mut Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
+fn cmd_delete(_cpu: &Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
+    dbg.state.breakpoints.clear();
+}
+fn cmd_list(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
     let mut addr = match args.len() {
         0 => cpu.reg.pc,
         1 => if let Ok(addr) = u16::from_str_radix(args[0], 16) {
@@ -138,7 +155,7 @@ fn cmd_list(cpu: &mut Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
         addr = print_instr(cpu, addr);
     }
 }
-fn cmd_step(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
+fn cmd_step(_cpu: &Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
     let steps = match args.len() {
         0 => 1,
         1 => if let Ok(addr) = u32::from_str(args[0]) {
@@ -148,6 +165,6 @@ fn cmd_step(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
         },
         _ => { println!("Too many arguments to step"); return; },
     };
-    dbg.steps_remaining = steps;
+    dbg.state.steps_remaining = steps;
     dbg.execute = true;
 }

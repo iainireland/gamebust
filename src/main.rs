@@ -88,14 +88,11 @@ fn main() {
             }
         }
 
-        debugger.check_breakpoints(&cpu);
         if debugger.is_paused() {
-            debugger.debug(&mut cpu);
+            debugger.debug(&cpu);
         }
 
-        let cycles = cpu.step();
-        cpu.update(cycles);
-
+        cpu.step(debugger.get_state());
         if cpu.needs_redraw() {
             const MICROS_PER_FRAME: u64 = 1_000_000 / 60;
             let data = cpu.get_screen_buffer();

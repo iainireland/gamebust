@@ -3,7 +3,8 @@ use {SCREEN_WIDTH,SCREEN_HEIGHT};
 
 const TILE_LINES_SIZE: usize = 0x1800 / 2;
 const BG_MAP_SIZE: usize = 0x400;
-const SPRITE_RAM_SIZE: usize = 0xa0;
+const NUM_SPRITES: usize = 40;
+const SPRITE_RAM_SIZE: usize = NUM_SPRITES * 4;
 const SCREEN_BUFFER_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 
 const HBLANK_CYCLES: i32 = 200;
@@ -235,7 +236,7 @@ impl Gpu {
         let sprite_height = if self.large_sprites_enabled { 16 } else { 8 };
 
         let mut visible_sprites = Vec::new();
-        for i in 0..40 {
+        for i in 0..NUM_SPRITES {
             let sprite_y = self.get_sprite_y(i);
             let sprite_x = self.get_sprite_x(i);
             if sprite_y == 0 && sprite_x == 0 { continue; }

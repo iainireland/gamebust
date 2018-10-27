@@ -3,6 +3,7 @@ use std::path::Path;
 
 use cartridge::Cartridge;
 use cpu::Interrupt;
+use debugger::DebugState;
 use gpu::{BgMap,Gpu};
 use joypad::{Joypad,Button};
 use serial::Serial;
@@ -12,7 +13,19 @@ const BOOT_ROM_SIZE: usize = 0x100;
 const INTERNAL_RAM_SIZE: usize = 0x2000;
 const HIGH_RAM_SIZE: usize = 0x7f;
 
+struct WatchInfo {
+    enabled: bool,
+    write_buffer: Vec<u16>
+}
 
+impl WatchInfo {
+    pub fn new() -> Self {
+        WatchInfo {
+            enabled: false,
+            write_buffer: vec![],
+        }
+    }
+}
 
 pub struct Bus {
     bootrom: [u8; BOOT_ROM_SIZE],
@@ -26,7 +39,8 @@ pub struct Bus {
     internal_ram: [u8; INTERNAL_RAM_SIZE],
     high_ram: [u8; HIGH_RAM_SIZE],
     interrupts_flag: Interrupt,
-    interrupts_enable: u8
+    interrupts_enable: u8,
+    watch_info: WatchInfo
 }
 
 impl Bus {
@@ -47,6 +61,7 @@ impl Bus {
             high_ram: [0; HIGH_RAM_SIZE],
             interrupts_flag: Interrupt::empty(),
             interrupts_enable: 0,
+            watch_info: WatchInfo::new(),
         })
     }
     pub fn r8(&self, addr: u16) -> u8 {
@@ -132,6 +147,9 @@ impl Bus {
             0xffff            => self.interrupts_enable = val,
             _ => unimplemented!("Unknown address: {:04x}", addr)
         }
+        if self.watch_info.enabled {
+            self.watch_info.write_buffer.push(addr);
+        }
     }
 
     pub fn r16(&self, addr: u16) -> u16 {
@@ -192,6 +210,19 @@ impl Bus {
     }
     pub fn clear_interrupt(&mut self, interrupt: Interrupt) {
         self.interrupts_flag.remove(interrupt);
+    }
+    pub fn set_watching(&mut self, value: bool) {
+        self.watch_info.enabled = value;
+    }
+    pub fn check_watch_buffer(&mut self, debug: &mut DebugState) {
+        if debug.watchpoints.is_empty() {
+            return;
+        }
+        for addr in self.watch_info.write_buffer.drain(..) {
+            if debug.watchpoints.contains(&addr) {
+                debug.paused = true;
+            }
+        }
     }
 }
 

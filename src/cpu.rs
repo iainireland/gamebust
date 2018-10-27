@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use bus::Bus;
+use debugger::DebugState;
 use registers::{Registers,Reg8,Reg16,Indirect};
 use instructions::{Cond,Instr};
 use joypad::Button;
@@ -22,7 +23,7 @@ pub struct Cpu {
     interrupts_buffer: Option<bool>,
     halted: bool,
     stopped: bool,
-    redraw: bool
+    redraw: bool,
 }
 
 impl Cpu {
@@ -37,11 +38,12 @@ impl Cpu {
             redraw: false
         }
     }
-    pub fn step(&mut self) ->  u32 {
+    pub fn step(&mut self, debug: &mut DebugState) {
         if self.stopped {
-            return 0;
+            return;
         }
 
+        self.bus.set_watching(!debug.watchpoints.is_empty());
         let interrupt = {
             let i = self.bus.get_highest_priority_interrupt();
             if i.is_some() {
@@ -77,7 +79,8 @@ impl Cpu {
             self.master_interrupt_flag = interrupt;
             self.interrupts_buffer = None;
         }
-        cycles
+        self.update(cycles);
+        self.update_debugger(debug);
     }
     #[inline(always)]
     pub fn fetch(&self, cursor: &mut u16) -> Instr {
@@ -693,5 +696,16 @@ impl Cpu {
         let result = self.redraw;
         self.redraw = false;
         result
+    }
+    fn update_debugger(&mut self, debug: &mut DebugState) {
+        if debug.steps_remaining > 0 {
+            debug.steps_remaining -= 1;
+            if debug.steps_remaining == 0 { debug.paused = true; }
+        }
+        if debug.breakpoints.contains(&self.reg.pc) {
+            debug.paused = true;
+            debug.steps_remaining = 0;
+        }
+        self.bus.check_watch_buffer(debug);
     }
 }
