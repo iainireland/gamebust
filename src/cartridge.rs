@@ -56,9 +56,8 @@ pub struct Cartridge {
 impl Cartridge {
     pub fn new(data: Vec<u8>) -> Self {
         let mode = CartridgeMode::new(data[0x147]).expect("Unknown cartridge type");
-        let rom_size = data[0x148];
-        let ram_size = data[0x149];
-        println!("Mode: {:?} ROM size: {} ({}) RAM size: ({})", mode, data.len(), rom_size, ram_size);
+        let _rom_size = data[0x148];
+        let _ram_size = data[0x149];
         Cartridge {
             data: data,
             mode: mode
