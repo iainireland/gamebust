@@ -179,7 +179,7 @@ impl Bus {
         for _ in 0..cycles / 4 {
             if let Some(offset) = self.dma.progress {
                 let base = (self.dma.address as u16) << 8;
-                let data = self.r8(base);
+                let data = self.r8(base + offset);
                 self.gpu.write_sprite_ram(offset, data);
                 self.dma.progress = if offset < 0x9f {
                     Some(offset + 1)
