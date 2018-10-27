@@ -34,7 +34,7 @@ impl Debugger {
         result.register_command("continue", cmd_continue);
         result.register_command("registers", cmd_registers);
         result.register_command("breakpoint", cmd_breakpoint);
-        result.register_command("bclear", cmd_clear);
+        result.register_command("delete", cmd_delete);
         result.register_command("list", cmd_list);
         result.register_command("step", cmd_step);
         result
@@ -121,7 +121,7 @@ fn cmd_breakpoint(_cpu: &mut Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
         dbg.breakpoints.insert(addr);
     }
 }
-fn cmd_clear(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
+fn cmd_delete(_cpu: &mut Cpu, dbg: &mut Debugger, _args: &Vec<&str>) {
     dbg.breakpoints.clear();
 }
 fn cmd_list(cpu: &mut Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
