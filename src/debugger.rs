@@ -50,6 +50,7 @@ impl Debugger {
         result.register_command("breakpoint", cmd_breakpoint);
         result.register_command("watchpoint", cmd_watchpoint);
         result.register_command("delete", cmd_delete);
+        result.register_command("xamine", cmd_examine);
         result.register_command("list", cmd_list);
         result.register_command("step", cmd_step);
         result
@@ -167,4 +168,13 @@ fn cmd_step(_cpu: &Cpu, dbg: &mut Debugger, args: &Vec<&str>) {
     };
     dbg.state.steps_remaining = steps;
     dbg.execute = true;
+}
+fn cmd_examine(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
+    if args.len() != 1 {
+        println!("Usage: x <addr>");
+        return;
+    }
+    if let Ok(addr) = u16::from_str_radix(args[0], 16) {
+        println!("0x{:4x}: {:2x}", addr, cpu.bus.r8(addr));
+    }
 }
