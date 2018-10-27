@@ -47,6 +47,7 @@ impl Debugger {
         };
         result.register_command("continue", cmd_continue);
         result.register_command("registers", cmd_registers);
+        result.register_command("sprites", cmd_sprites);
         result.register_command("breakpoint", cmd_breakpoint);
         result.register_command("watchpoint", cmd_watchpoint);
         result.register_command("delete", cmd_delete);
@@ -176,5 +177,16 @@ fn cmd_examine(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
     }
     if let Ok(addr) = u16::from_str_radix(args[0], 16) {
         println!("0x{:4x}: {:2x}", addr, cpu.bus.r8(addr));
+    }
+}
+fn cmd_sprites(cpu: &Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
+    const SPRITE_RAM_ADDR: u16 = 0xfe00;
+    for i in 0..::gpu::NUM_SPRITES as u16{
+        let y = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4);
+        let x = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 1);
+        let t = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 2);
+        let f = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 3);
+        println!("Sprite {}: ({},{}) Tile {} Flags: {:8b}",
+                 i, x, y, t, f);
     }
 }

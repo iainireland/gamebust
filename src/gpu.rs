@@ -1,9 +1,9 @@
 use cpu::Interrupt;
 use {SCREEN_WIDTH,SCREEN_HEIGHT};
 
+pub const NUM_SPRITES: usize = 40;
 const TILE_LINES_SIZE: usize = 0x1800 / 2;
 const BG_MAP_SIZE: usize = 0x400;
-const NUM_SPRITES: usize = 40;
 const SPRITE_RAM_SIZE: usize = NUM_SPRITES * 4;
 const SCREEN_BUFFER_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 
