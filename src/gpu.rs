@@ -262,8 +262,8 @@ impl Gpu {
                 sprite_height - tile_offset - 1
             } else {
                 tile_offset
-            };
-            let tile_val = self.tile_lines[(tile_index * 8 + tile_line_index) as usize];
+            } as usize;
+            let tile_val = self.tile_lines[tile_index * 8 + tile_line_index];
             for j in 0..8 {
                 if sprite_x + j < 7 { continue; }
                 let screen_x = (sprite_x + j - 8) as usize;
@@ -277,7 +277,6 @@ impl Gpu {
 
                 self.draw_pixel(screen_x, colour);
             }
-
         }
     }
 
@@ -335,13 +334,13 @@ impl Gpu {
     fn get_sprite_x(&self, index: usize) -> u8 {
         self.sprite_ram[index * 4 + 1]
     }
-    fn get_sprite_tile_index(&self, index: usize) -> u8 {
+    fn get_sprite_tile_index(&self, index: usize) -> usize {
         let result = self.sprite_ram[index * 4 + 2];
-        if self.large_sprites_enabled {
+        (if self.large_sprites_enabled {
             result & !0x01
         } else {
             result
-        }
+        }) as usize
     }
     fn get_sprite_flags(&self, index: usize) -> u8 {
         self.sprite_ram[index * 4 + 3]

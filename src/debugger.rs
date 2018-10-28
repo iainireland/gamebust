@@ -181,7 +181,7 @@ fn cmd_examine(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
 }
 fn cmd_sprites(cpu: &Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
     const SPRITE_RAM_ADDR: u16 = 0xfe00;
-    for i in 0..::gpu::NUM_SPRITES as u16{
+    for i in 0..::gpu::NUM_SPRITES as u16 {
         let y = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4);
         let x = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 1);
         let t = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 2);
