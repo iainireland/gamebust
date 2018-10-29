@@ -304,9 +304,9 @@ impl Gpu {
         let index = addr as usize / 2;
         let line = self.tile_lines[index];
         self.tile_lines[index] = if addr & 0x1 == 1 {
-            (line & 0xf0) | val as u16
+            (line & 0xff00) | val as u16
         } else {
-            (line & 0x0f) | ((val as u16) << 8)
+            (line & 0x00ff) | ((val as u16) << 8)
         };
     }
     #[inline(always)]
