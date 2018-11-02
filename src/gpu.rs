@@ -2,6 +2,7 @@ use cpu::Interrupt;
 use {SCREEN_WIDTH,SCREEN_HEIGHT};
 
 pub const NUM_SPRITES: usize = 40;
+const NUM_VISIBLE_SPRITES_PER_LINE: usize = 10;
 const TILE_LINES_SIZE: usize = 0x1800 / 2;
 const BG_MAP_SIZE: usize = 0x400;
 const SPRITE_RAM_SIZE: usize = NUM_SPRITES * 4;
@@ -231,51 +232,55 @@ impl Gpu {
             self.draw_pixel(i as usize, colour);
         }
     }
-    fn render_sprites(&mut self) {
+
+    fn sprite_height(&self) -> u8 {
+        if self.large_sprites_enabled { 16 } else { 8 }
+    }
+
+    fn active_sprites(&mut self) -> Vec<(u8, usize, u8)> {
         let line_y = self.ly;
-        let sprite_height = if self.large_sprites_enabled { 16 } else { 8 };
 
         let mut visible_sprites = Vec::new();
         for i in 0..NUM_SPRITES {
-            let sprite_y = self.get_sprite_y(i);
-            let sprite_x = self.get_sprite_x(i);
+            let sprite_y = self.sprite_y(i);
+            let sprite_x = self.sprite_x(i);
             if sprite_y == 0 && sprite_x == 0 { continue; }
             if sprite_y > line_y + 16 { continue; }
-            if sprite_y + sprite_height < line_y + 16 { continue; }
+            if sprite_y + self.sprite_height() < line_y + 16 { continue; }
             visible_sprites.push((sprite_x, i, sprite_y));
         }
         visible_sprites.sort();
-        let active_sprites = visible_sprites.iter().take(10).collect::<Vec<_>>();
-        for (sprite_x, i, sprite_y) in active_sprites.iter().rev() {
-            let tile_index = self.get_sprite_tile_index(*i);
-            let flags = self.get_sprite_flags(*i);
-            let low_priority = flags & 0x80 != 0;
-            let y_flip       = flags & 0x40 != 0;
-            let x_flip       = flags & 0x20 != 0;
-            let palette = self.obj_palette[(flags & 0x10) as usize >> 4];
+        visible_sprites.into_iter().take(NUM_VISIBLE_SPRITES_PER_LINE).collect()
+    }
 
-            if x_flip { }//unimplemented!("x flip"); }
-            if low_priority { }//unimplemented!("low priority"); }
-
-            let tile_offset = line_y + 16 - sprite_y;
-            let tile_line_index = if y_flip {
-                sprite_height - tile_offset - 1
+    fn render_sprites(&mut self) {
+        for (sprite_x, i, sprite_y) in self.active_sprites().into_iter().rev() {
+            let tile_index = self.sprite_tile_index(i);
+            let tile_offset = self.ly + 16 - sprite_y;
+            let tile_line_index = if self.sprite_y_flip(i) {
+                self.sprite_height() - tile_offset - 1
             } else {
                 tile_offset
             } as usize;
+
             let tile_val = self.tile_lines[tile_index * 8 + tile_line_index];
+            let palette = self.sprite_palette(i);
             for j in 0..8 {
                 if sprite_x + j < 7 { continue; }
                 let screen_x = (sprite_x + j - 8) as usize;
                 if screen_x >= SCREEN_WIDTH { continue; }
 
-                let tile_bit_shift = 7 - j;
+                let tile_bit_shift = if self.sprite_x_flip(i) { j } else { 7 - j };
                 let palette_index =
                     ((tile_val >> tile_bit_shift) & 1) * 2 +
                     ((tile_val >> (tile_bit_shift + 8)) & 1);
                 let colour = palette.get(palette_index as usize);
 
-                self.draw_pixel(screen_x, colour);
+                if self.sprite_low_priority(i) {
+                    self.draw_low_priority_pixel(screen_x, colour);
+                } else {
+                    self.draw_pixel(screen_x, colour);
+                }
             }
         }
     }
@@ -285,9 +290,24 @@ impl Gpu {
         let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
         let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
         let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
-        screen_buffer_slice[x as usize * 3] = colour;
-        screen_buffer_slice[x as usize * 3 + 1] = colour;
-        screen_buffer_slice[x as usize * 3 + 2] = colour;
+        let buffer_index = x as usize * 3;
+        screen_buffer_slice[buffer_index] = colour;
+        screen_buffer_slice[buffer_index + 1] = colour;
+        screen_buffer_slice[buffer_index + 2] = colour;
+    }
+    #[inline(always)]
+    fn draw_low_priority_pixel(&mut self, x: usize, colour: u8) {
+        let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
+        let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
+        let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
+        let buffer_index = x as usize * 3;
+
+        if screen_buffer_slice[buffer_index] > colour {
+            return;
+        }
+        screen_buffer_slice[buffer_index] = colour;
+        screen_buffer_slice[buffer_index + 1] = colour;
+        screen_buffer_slice[buffer_index + 2] = colour;
     }
 
     #[inline(always)]
@@ -328,13 +348,13 @@ impl Gpu {
         self.sprite_ram[addr as usize] = val;
     }
 
-    fn get_sprite_y(&self, index: usize) -> u8 {
+    fn sprite_y(&self, index: usize) -> u8 {
         self.sprite_ram[index * 4]
     }
-    fn get_sprite_x(&self, index: usize) -> u8 {
+    fn sprite_x(&self, index: usize) -> u8 {
         self.sprite_ram[index * 4 + 1]
     }
-    fn get_sprite_tile_index(&self, index: usize) -> usize {
+    fn sprite_tile_index(&self, index: usize) -> usize {
         let result = self.sprite_ram[index * 4 + 2];
         (if self.large_sprites_enabled {
             result & !0x01
@@ -342,8 +362,20 @@ impl Gpu {
             result
         }) as usize
     }
-    fn get_sprite_flags(&self, index: usize) -> u8 {
+    fn sprite_flags(&self, index: usize) -> u8 {
         self.sprite_ram[index * 4 + 3]
+    }
+    fn sprite_x_flip(&self, index: usize) -> bool {
+        self.sprite_flags(index) & 0x80 != 0
+    }
+    fn sprite_low_priority(&self, index: usize) -> bool {
+        self.sprite_flags(index) & 0x40 != 0
+    }
+    fn sprite_y_flip(&self, index: usize) -> bool {
+        self.sprite_flags(index) & 0x20 != 0
+    }
+    fn sprite_palette(&self, index: usize) -> Palette {
+        self.obj_palette[(self.sprite_flags(index) & 0x10) as usize >> 4]
     }
 
     #[inline(always)]
