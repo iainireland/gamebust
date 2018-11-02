@@ -30,6 +30,7 @@ use joypad::Button;
 
 const SCREEN_WIDTH: usize = 160;
 const SCREEN_HEIGHT: usize = 144;
+const SCREEN_BUFFER_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
 
 fn main() {
     let matches = clap_app!(gamebust =>
@@ -66,6 +67,7 @@ fn main() {
     let mut cpu = Cpu::new(Path::new(&input_file));
     let mut debugger = Debugger::new();
     let mut frame_start = Instant::now();
+    let mut screen_buffer = [0; SCREEN_BUFFER_SIZE];
 
     'eventloop: loop {
 
@@ -95,8 +97,8 @@ fn main() {
         cpu.step(debugger.get_state());
         if cpu.needs_redraw() {
             const MICROS_PER_FRAME: u64 = 1_000_000 / 60;
-            let data = cpu.get_screen_buffer();
-            screen_texture.update(None, data, SCREEN_WIDTH * 3).unwrap();
+            cpu.fill_screen_buffer(&mut screen_buffer);
+            screen_texture.update(None, &screen_buffer, SCREEN_WIDTH * 3).unwrap();
             canvas.copy(&screen_texture, None, screen_rect).unwrap();
             canvas.present();
 

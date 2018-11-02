@@ -5,6 +5,7 @@ use debugger::DebugState;
 use registers::{Registers,Reg8,Reg16,Indirect};
 use instructions::{Cond,Instr};
 use joypad::Button;
+use SCREEN_BUFFER_SIZE;
 
 bitflags! {
     pub struct Interrupt: u8 {
@@ -685,11 +686,11 @@ impl Cpu {
     pub fn update(&mut self, cycles: u32) {
         self.redraw = self.bus.update(cycles);
     }
-    pub fn get_screen_buffer(&mut self) -> &[u8] {
+    pub fn fill_screen_buffer(&self, buffer: &mut[u8; SCREEN_BUFFER_SIZE]) {
         if self.stopped {
-            &::gpu::STOPPED_SCREEN
+            *buffer = [0xff; SCREEN_BUFFER_SIZE];
         } else {
-            self.bus.get_screen_buffer()
+            self.bus.fill_screen_buffer(buffer);
         }
     }
     pub fn needs_redraw(&mut self) -> bool {

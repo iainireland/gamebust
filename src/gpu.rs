@@ -1,20 +1,17 @@
 use cpu::Interrupt;
-use {SCREEN_WIDTH,SCREEN_HEIGHT};
+use {SCREEN_WIDTH,SCREEN_HEIGHT,SCREEN_BUFFER_SIZE};
 
 pub const NUM_SPRITES: usize = 40;
 const NUM_VISIBLE_SPRITES_PER_LINE: usize = 10;
 const TILE_LINES_SIZE: usize = 0x1800 / 2;
 const BG_MAP_SIZE: usize = 0x400;
 const SPRITE_RAM_SIZE: usize = NUM_SPRITES * 4;
-const SCREEN_BUFFER_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 3;
+const SCREEN_DATA_SIZE: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
 const HBLANK_CYCLES: i32 = 200;
 const VBLANK_CYCLES: i32 = 456;
 const OAM_ACCESS_CYCLES: i32 = 84;
 const VRAM_ACCESS_CYCLES: i32 = 172;
-
-pub const STOPPED_SCREEN: [u8; SCREEN_BUFFER_SIZE] =
-    *include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/stopscreen"));
 
 #[derive(Copy,Clone,Debug)]
 pub enum BgMap {
@@ -33,11 +30,9 @@ impl Palette {
     }
     #[inline(always)]
     pub fn from_u8(raw: u8) -> Self {
-        const BRIGHTNESS: [u8; 4] = [0xff, 0xcc, 0x77, 0x00];
         let mut colours = [0; 4];
         for i in 0..4 {
-            let bits = (raw >> (2 * i)) & 0x3;
-            colours[i] = BRIGHTNESS[bits as usize];
+            colours[i] = (raw >> (2 * i)) & 0x3;
         }
         Palette { colours: colours }
     }
@@ -91,7 +86,7 @@ pub struct Gpu {
     vblank_check_enabled: bool,
     hblank_check_enabled: bool,
 
-    screen_buffer: [u8; SCREEN_BUFFER_SIZE],
+    screen_data: [u8; SCREEN_DATA_SIZE],
     mode: Mode,
     cycles_left: i32,
 }
@@ -123,7 +118,7 @@ impl Gpu {
             oam_check_enabled: false,
             vblank_check_enabled: false,
             hblank_check_enabled: false,
-            screen_buffer: [0; SCREEN_BUFFER_SIZE],
+            screen_data: [0; SCREEN_DATA_SIZE],
             mode: Mode::OamAccess,
             cycles_left: 0,
         }
@@ -287,27 +282,15 @@ impl Gpu {
 
     #[inline(always)]
     fn draw_pixel(&mut self, x: usize, colour: u8) {
-        let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
-        let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
-        let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
-        let buffer_index = x as usize * 3;
-        screen_buffer_slice[buffer_index] = colour;
-        screen_buffer_slice[buffer_index + 1] = colour;
-        screen_buffer_slice[buffer_index + 2] = colour;
+        let index = self.ly as usize * SCREEN_WIDTH + x;
+        self.screen_data[index] = colour;
     }
     #[inline(always)]
     fn draw_low_priority_pixel(&mut self, x: usize, colour: u8) {
-        let slice_start = self.ly as usize * SCREEN_WIDTH * 3;
-        let slice_end = (self.ly + 1) as usize * SCREEN_WIDTH * 3;
-        let screen_buffer_slice = &mut self.screen_buffer[slice_start..slice_end];
-        let buffer_index = x as usize * 3;
-
-        if screen_buffer_slice[buffer_index] > colour {
-            return;
+        let index = self.ly as usize * SCREEN_WIDTH + x;
+        if self.screen_data[index] == 0 {
+            self.screen_data[index] = colour;
         }
-        screen_buffer_slice[buffer_index] = colour;
-        screen_buffer_slice[buffer_index + 1] = colour;
-        screen_buffer_slice[buffer_index + 2] = colour;
     }
 
     #[inline(always)]
@@ -485,7 +468,13 @@ impl Gpu {
         self.window_y = value;
     }
     #[inline(always)]
-    pub fn get_screen_buffer(&self) -> &[u8] {
-        &self.screen_buffer
+    pub fn fill_screen_buffer(&self, buffer: &mut[u8; SCREEN_BUFFER_SIZE]) {
+        const BRIGHTNESS: [u8; 4] = [0xff, 0xcc, 0x77, 0x00];
+        for i in 0..SCREEN_DATA_SIZE {
+            let brightness = BRIGHTNESS[self.screen_data[i] as usize];
+            buffer[i * 3] = brightness;
+            buffer[i * 3 + 1] = brightness;
+            buffer[i * 3 + 2] = brightness;
+        }
     }
 }

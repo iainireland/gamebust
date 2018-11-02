@@ -8,6 +8,7 @@ use gpu::{BgMap,Gpu};
 use joypad::{Joypad,Button};
 use serial::Serial;
 use timer::Timer;
+use SCREEN_BUFFER_SIZE;
 
 const BOOT_ROM_SIZE: usize = 0x100;
 const INTERNAL_RAM_SIZE: usize = 0x2000;
@@ -191,8 +192,8 @@ impl Bus {
             }
         }
     }
-    pub fn get_screen_buffer(&self) -> &[u8] {
-        self.gpu.get_screen_buffer()
+    pub fn fill_screen_buffer(&self, buffer: &mut[u8; SCREEN_BUFFER_SIZE]){
+        self.gpu.fill_screen_buffer(buffer)
     }
     pub fn get_highest_priority_interrupt(&self) -> Option<Interrupt> {
         let enabled = Interrupt::from_bits_truncate(self.interrupts_enable);
