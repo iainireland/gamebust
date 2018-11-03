@@ -179,14 +179,61 @@ fn cmd_examine(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
         println!("0x{:4x}: {:2x}", addr, cpu.bus.r8(addr));
     }
 }
-fn cmd_sprites(cpu: &Cpu, _dbg: &mut Debugger, _args: &Vec<&str>) {
+
+fn print_sprite(i: u16, cpu: &Cpu, verbose: bool) {
     const SPRITE_RAM_ADDR: u16 = 0xfe00;
-    for i in 0..::gpu::NUM_SPRITES as u16 {
-        let y = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4);
-        let x = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 1);
-        let t = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 2);
-        let f = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 3);
-        println!("Sprite {}: ({},{}) Tile {} Flags: {:8b}",
-                 i, x, y, t, f);
+    const GPU_CONTROL_ADDR: u16 = 0xff40;
+    const TILE_RAM_ADDR: u16 = 0x8000;
+
+    let y = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4);
+    let x = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 1);
+    let t = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 2);
+    let f = cpu.bus.r8(SPRITE_RAM_ADDR + i * 4 + 3);
+
+    if !verbose && x == 0 && y == 0 && t == 0 && f == 0 {
+        return;
+    }
+
+    print!("Sprite {:02}: ({:3},{:3}) ", i, x, y);
+    print!("{}{}{}{}",
+           if f & 0x80 != 0 { "L" } else { "_" },
+           if f & 0x20 != 0 { "X" } else { "_" },
+           if f & 0x40 != 0 { "Y" } else { "_" },
+           if f & 0x10 != 0 { "1" } else { "0" });
+    print!(" Tile {:3}", t);
+    println!();
+
+    if verbose {
+        let control = cpu.bus.r8(GPU_CONTROL_ADDR);
+        let num_lines = if control & (1 << 2) != 0 { 16 } else { 8 };
+        let base_tile = TILE_RAM_ADDR + (t as u16) * 16;
+        for i in 0..num_lines {
+            let line_addr = base_tile + i * 2;
+            let low  = cpu.bus.r8(line_addr);
+            let high = cpu.bus.r8(line_addr + 1);
+            print!("\t");
+            for j in 0..8 {
+                print!("{}",
+                       ((low >> (7-j)) & 1) +
+                       ((high >> (7-j)) & 1) * 2);
+            }
+            println!();
+        }
+    }
+}
+
+fn cmd_sprites(cpu: &Cpu, _dbg: &mut Debugger, args: &Vec<&str>) {
+    if args.len() > 1 {
+        println!("Usage: sprites | sprites <i>");
+        return;
+    }
+    if args.len() == 0 {
+        for i in 0..::gpu::NUM_SPRITES as u16 {
+            print_sprite(i, cpu, false);
+        }
+    } else {
+        if let Ok(i) = u16::from_str(args[0]) {
+            print_sprite(i, cpu, true);
+        }
     }
 }
