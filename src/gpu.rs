@@ -241,7 +241,7 @@ impl Gpu {
             let sprite_x = self.sprite_x(i);
             if sprite_y == 0 && sprite_x == 0 { continue; }
             if sprite_y > line_y + 16 { continue; }
-            if sprite_y + self.sprite_height() < line_y + 16 { continue; }
+            if sprite_y + self.sprite_height() <= line_y + 16 { continue; }
             visible_sprites.push((sprite_x, i, sprite_y));
         }
         visible_sprites.sort();
@@ -349,13 +349,13 @@ impl Gpu {
         self.sprite_ram[index * 4 + 3]
     }
     fn sprite_x_flip(&self, index: usize) -> bool {
-        self.sprite_flags(index) & 0x80 != 0
+        self.sprite_flags(index) & 0x20 != 0
     }
     fn sprite_low_priority(&self, index: usize) -> bool {
-        self.sprite_flags(index) & 0x40 != 0
+        self.sprite_flags(index) & 0x80 != 0
     }
     fn sprite_y_flip(&self, index: usize) -> bool {
-        self.sprite_flags(index) & 0x20 != 0
+        self.sprite_flags(index) & 0x40 != 0
     }
     fn sprite_palette(&self, index: usize) -> Palette {
         self.obj_palette[(self.sprite_flags(index) & 0x10) as usize >> 4]
